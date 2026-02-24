@@ -1,0 +1,34 @@
+[project]
+name = "voiceeditor"
+version = "0.1.0"
+description = "Unified Video Dubbing & Voice Synthesis Wrapper for IndexTTS2"
+authors = [{ name = "YinLu" }]
+dependencies = [
+    "yt-dlp",
+    "openai-whisper",
+    "pysrt",
+    "pydub",
+    "librosa",
+    "soundfile",
+    "modelscope",
+    "huggingface-hub",
+    "torch",
+    "torchaudio",
+    "einops",
+    "transformers",
+    "accelerate",
+    "sentencepiece",
+    "numpy<2.0.0",
+]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[tool.uv.sources]
+# Path to the bundled index-tts submodule
+indextts = { path = "index-tts" }
