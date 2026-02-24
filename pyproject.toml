@@ -3,6 +3,7 @@ name = "voiceeditor"
 version = "0.1.0"
 description = "Unified Video Dubbing & Voice Synthesis Wrapper for IndexTTS2"
 authors = [{ name = "YinLu" }]
+requires-python = ">=3.11, <3.13"
 dependencies = [
     "yt-dlp",
     "openai-whisper",

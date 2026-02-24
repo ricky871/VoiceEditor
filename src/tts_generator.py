@@ -28,6 +28,7 @@ import logging
 import time
 import subprocess
 import signal
+import tempfile
 from glob import glob
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -288,38 +289,88 @@ def retime_segment_to_target(
     segment: AudioSegment,
     target_ms: float,
     sample_rate: int,
-    tolerance_ms: int = 1, # Lowered from 12 to 1 for strict consistency
+    tolerance_ms: int = 1,
 ) -> tuple[AudioSegment, int, float]:
     """
     Retime a segment so its length strictly matches the subtitle window.
+    Optimized for consistent speech rate using atempo when possible to 
+    avoid the "jerky" or "fluctuating" sound of simple silence-stripping.
     """
     target = max(1, int(round(target_ms)))
     seg = segment.set_frame_rate(sample_rate).set_channels(1)
     current = len(seg)
     speed_factor = 1.0
 
-    if current == target:
+    if abs(current - target) <= tolerance_ms:
         return seg, current, speed_factor
 
-    if current > target:
-        # Use speedup only if the difference is significant (> 15ms)
-        # to avoid processing artifacts for tiny differences
-        if current > target + 15:
-            speed_factor = current / target
-            seg = speedup(seg, playback_speed=speed_factor, chunk_size=50, crossfade=5)
-            current = len(seg)
-        
-        # Always truncate to exactly target value
+    speed_factor = current / target
+
+    # Only apply speed adjustment if difference is more than 2% or 50ms
+    # Small differences are better handled by slight padding or truncation
+    if 0.98 <= speed_factor <= 1.02 or abs(current - target) < 50:
         if current > target:
             seg = seg[:target]
-            current = len(seg)
-    else:
-        # Padding with silence if shorter
-        padding = AudioSegment.silent(duration=target - current, frame_rate=seg.frame_rate)
-        seg = seg + padding
-        current = len(seg)
+        else:
+            padding = AudioSegment.silent(duration=target - current, frame_rate=seg.frame_rate)
+            seg = seg + padding
+        return seg, len(seg), 1.0
 
-    return seg, current, speed_factor
+    # For larger differences, use a high-quality speedup method
+    try:
+        # Use ffmpeg for higher quality smooth speed change (atempo filter)
+        # This keeps the speech rate uniform and avoids word truncation artifacts
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_in:
+            seg.export(tmp_in.name, format="wav")
+            tmp_in_path = Path(tmp_in.name)
+        
+        tmp_out_path = tmp_in_path.with_suffix(".out.wav")
+        
+        # atempo range is [0.5, 2.0]. Chain filters for extreme factors if necessary.
+        filters = []
+        temp_s = speed_factor
+        while temp_s > 2.0:
+            filters.append("atempo=2.0")
+            temp_s /= 2.0
+        while temp_s < 0.5:
+            filters.append("atempo=0.5")
+            temp_s /= 0.5
+        filters.append(f"atempo={temp_s}")
+
+        cmd = [
+            "ffmpeg", "-y", "-i", str(tmp_in_path),
+            "-filter:a", ",".join(filters),
+            str(tmp_out_path)
+        ]
+        result = subprocess.run(cmd, capture_output=True, check=False)
+        
+        if result.returncode == 0 and tmp_out_path.exists():
+            seg = AudioSegment.from_file(str(tmp_out_path)).set_frame_rate(sample_rate).set_channels(1)
+        else:
+            raise RuntimeError(f"FFmpeg failed: {result.stderr.decode(errors='ignore')}")
+
+        if tmp_in_path.exists(): tmp_in_path.unlink()
+        if tmp_out_path.exists(): tmp_out_path.unlink()
+        
+        # Final fine-tuning to ensure exact length
+        if len(seg) > target:
+            seg = seg[:target]
+        elif len(seg) < target:
+            seg = seg + AudioSegment.silent(duration=target - len(seg), frame_rate=sample_rate)
+            
+    except Exception as e:
+        # Fallback to pydub speedup but with larger chunk size for better stability
+        logging.warning("Smooth speedup failed, falling back to pydub: %s", e)
+        if current > target:
+            # chunk_size 60 and crossfade 10 are slightly better for speech than 50/5
+            seg = speedup(seg, playback_speed=speed_factor, chunk_size=60, crossfade=10)
+            if len(seg) > target:
+                seg = seg[:target]
+        else:
+            padding = AudioSegment.silent(duration=target - current, frame_rate=seg.frame_rate)
+            seg = seg + padding
+            
+    return seg, len(seg), speed_factor
 
 
 def build_duration_candidates(mode: str, target_ms: float, tokens_per_sec: float) -> List[Dict]:

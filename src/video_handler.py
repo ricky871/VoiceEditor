@@ -44,6 +44,10 @@ class VideoEngine:
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'outtmpl': str(self.work_dir / '%(title)s.%(ext)s'),
             'restrictfilenames': True,
+            'nocheckcertificate': True,
+            'retries': 10,
+            'fragment_retries': 10,
+            'retry_sleep_functions': {'http': lambda n: 5 * (n + 1)},
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
