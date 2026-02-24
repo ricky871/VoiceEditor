@@ -288,27 +288,33 @@ def retime_segment_to_target(
     segment: AudioSegment,
     target_ms: float,
     sample_rate: int,
-    tolerance_ms: int = 12,
+    tolerance_ms: int = 1, # Lowered from 12 to 1 for strict consistency
 ) -> tuple[AudioSegment, int, float]:
     """
-    Retime a segment so its length does not exceed the subtitle window.
+    Retime a segment so its length strictly matches the subtitle window.
     """
     target = max(1, int(round(target_ms)))
     seg = segment.set_frame_rate(sample_rate).set_channels(1)
     current = len(seg)
     speed_factor = 1.0
 
-    if abs(current - target) <= tolerance_ms:
+    if current == target:
         return seg, current, speed_factor
 
     if current > target:
-        speed_factor = current / target
-        seg = speedup(seg, playback_speed=speed_factor, chunk_size=50, crossfade=5)
-        current = len(seg)
-        if current > target + tolerance_ms:
+        # Use speedup only if the difference is significant (> 15ms)
+        # to avoid processing artifacts for tiny differences
+        if current > target + 15:
+            speed_factor = current / target
+            seg = speedup(seg, playback_speed=speed_factor, chunk_size=50, crossfade=5)
+            current = len(seg)
+        
+        # Always truncate to exactly target value
+        if current > target:
             seg = seg[:target]
             current = len(seg)
     else:
+        # Padding with silence if shorter
         padding = AudioSegment.silent(duration=target - current, frame_rate=seg.frame_rate)
         seg = seg + padding
         current = len(seg)

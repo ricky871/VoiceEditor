@@ -11,6 +11,8 @@ import sys
 import os
 import json
 import logging
+import platform
+import subprocess
 from pathlib import Path
 
 # Add src to sys.path for direct imports
@@ -44,6 +46,30 @@ def cmd_run(args):
         logging.error("Video processing failed.")
         sys.exit(1)
     
+    # 1.5. Manual SRT Editing
+    srt_path = video_data["srt"]
+    logging.info(f"Subtitles generated at: {srt_path}")
+    logging.info("Opening subtitles for manual editing...")
+    
+    try:
+        if platform.system() == "Windows":
+            os.startfile(srt_path)
+        elif platform.system() == "Darwin":  # macOS
+            subprocess.run(["open", srt_path])
+        else:  # Linux
+            subprocess.run(["xdg-open", srt_path])
+        
+        print("\n" + "="*60)
+        print(f"PLEASE EDIT THE SUBTITLE FILE: {srt_path}")
+        print("You can correct transcription errors, adjust timing, or change text.")
+        print("Once you have saved and closed the editor, press ENTER to continue...")
+        print("="*60 + "\n")
+        input()
+    except Exception as e:
+        logging.warning(f"Could not open editor automatically: {e}")
+        print(f"\nPlease manually edit: {srt_path}")
+        input("Press ENTER after you have finished editing...")
+
     # 2. TTS Generation
     logging.info("Step 2: Generating TTS from Subtitles")
     # Mapping args to tts_generator expected format

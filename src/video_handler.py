@@ -86,8 +86,8 @@ class VideoEngine:
         logging.info(f"Transcription saved to {srt_path}")
         return srt_path
 
-    def extract_voice_ref(self, audio_path: Path, duration_sec: int = 30) -> Optional[Path]:
-        logging.info(f"Extracting {duration_sec}s voice reference (choosing lowest energy segment)...")
+    def extract_voice_ref(self, audio_path: Path, duration_sec: int = 10, srt_path: Optional[Path] = None) -> Optional[Path]:
+        logging.info(f"Extracting {duration_sec}s voice reference...")
         try:
             import librosa
             import soundfile as sf
@@ -103,23 +103,36 @@ class VideoEngine:
         if len(y) < samples_per_window:
             samples_per_window = len(y)
             
-        # Root Mean Square (RMS) energy to find the "quietest" but non-silent segment 
-        # (usually means less background music/noise if it's a commentary video)
-        # Note: Actually, for voices, we want clear speech. 
-        # For simplicity, we'll pick a slice that isn't silence.
-        
         best_start = 0
-        min_rms = float('inf')
         
-        # Step through audio in 5s increments
-        step = 5 * sr
-        for start in range(0, len(y) - samples_per_window, step):
-            window = y[start : start + samples_per_window]
-            rms = np.sqrt(np.mean(window**2))
-            # We want clear voice, typically RMS > threshold to avoid literal silence
-            if 0.01 < rms < min_rms: 
-                min_rms = rms
-                best_start = start
+        # Strategy 1: Use SRT to find a segment with confirmed speech
+        if srt_path and srt_path.exists():
+            try:
+                import pysrt
+                subs = pysrt.open(str(srt_path))
+                if len(subs) > 0:
+                    # Pick a subtitle somewhere early-to-mid to ensure good voice clarity
+                    idx = min(len(subs) // 4, 10) 
+                    if idx >= len(subs): idx = 0
+                    
+                    best_start = int((subs[idx].start.ordinal / 1000.0) * sr)
+                    logging.info(f"Using SRT to find voice reference at sample {best_start} (sub index {idx})")
+            except Exception as e:
+                logging.warning(f"Failed to use SRT for voice ref extraction: {e}")
+        
+        # Strategy 2: Fallback to Peak Energy Search if SRT failed or wasn't provided
+        if best_start == 0:
+            logging.info("Searching for highest energy segment for voice reference...")
+            max_rms = -1.0
+            step = 5 * sr  # Step through in 5s increments
+            
+            for start in range(0, len(y) - samples_per_window, step):
+                window = y[start : start + samples_per_window]
+                rms = np.sqrt(np.mean(window**2))
+                # We want typical speech energy, usually higher than background but not clipping
+                if rms > max_rms and rms < 0.5: 
+                    max_rms = rms
+                    best_start = start
                 
         ref_path = audio_path.parent / "voice_ref.wav"
         y_ref = y[best_start : best_start + samples_per_window]
@@ -137,7 +150,7 @@ def run_video_pipeline(url: str, work_dir: str = "work", model: str = "small", l
     if not audio: return None
     
     srt = engine.transcribe(audio, model_size=model, lang=lang)
-    ref = engine.extract_voice_ref(audio)
+    ref = engine.extract_voice_ref(audio, srt_path=srt)
     
     return {
         "video": str(video),

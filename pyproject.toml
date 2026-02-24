@@ -19,6 +19,14 @@ dependencies = [
     "accelerate",
     "sentencepiece",
     "numpy<2.0.0",
+    "omegaconf",
+    "munch",
+    "safetensors",
+    "tqdm",
+    "cn2an",
+    "pinyin",
+    "jieba",
+    "indextts",
 ]
 
 [tool.uv]
