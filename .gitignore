@@ -28,7 +28,9 @@ ENV/
 
 # Project Specific
 .cache/
-checkpoints/
+checkpoints/*
+!checkpoints/*.yaml
+!checkpoints/pinyin.vocab
 work/
 outputs/
 *.log
