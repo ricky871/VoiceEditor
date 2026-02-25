@@ -30,7 +30,11 @@ ENV/
 .cache/
 checkpoints/*
 !checkpoints/*.yaml
+!checkpoints/*.json
+!checkpoints/*.md
+!checkpoints/LICENSE*
 !checkpoints/pinyin.vocab
+!checkpoints/bpe.model
 work/
 outputs/
 *.log
