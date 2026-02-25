@@ -33,6 +33,7 @@ from glob import glob
 from pathlib import Path
 from typing import Dict, List, Optional
 from contextlib import contextmanager
+from tqdm import tqdm
 
 try:
     import pysrt
@@ -432,7 +433,7 @@ def stitch_segments(
         frame_rate=sample_rate,
     ).set_channels(1)
 
-    for entry in manifest:
+    for entry in tqdm(manifest, desc="Stitching segments", unit="seg"):
         segment_audio = AudioSegment.from_file(entry["wav"]).set_channels(1).set_frame_rate(sample_rate)
         segment_audio, _, _ = retime_segment_to_target(
             segment_audio,
@@ -596,27 +597,17 @@ def synthesize_segments(
     manifest: List[Dict] = []
     failed_segments = []
 
-    for seq, entry in enumerate(entries, start=1):
+    pbar = tqdm(entries, desc="Generating TTS", unit="seg")
+    for seq, entry in enumerate(pbar, start=1):
         seg_name = f"seg_{seq:04d}.wav"
         seg_path = config.out_dir / seg_name
 
         if seq in existing_manifest and seg_path.exists():
-            logging.info(
-                "Skipping segment %d/%d: '%s' (already generated)",
-                seq,
-                len(entries),
-                entry["text"][:50],
-            )
+            pbar.set_postfix_str(f"Skipping {seq}")
             manifest.append(existing_manifest[seq])
             continue
 
-        logging.info(
-            "Processing segment %d/%d: '%s' (duration: %.2f s)",
-            seq,
-            len(entries),
-            entry["text"][:50],
-            ms_to_seconds(entry["dur_ms"]),
-        )
+        pbar.set_description(f"TTS {seq}/{len(entries)}: {entry['text'][:20]}...")
 
         duration_candidates = build_duration_candidates(
             config.duration_mode,
@@ -682,13 +673,11 @@ def synthesize_segments(
                 }
             )
 
-            logging.info(
-                "Segment %d | target %.2f s | actual %.2f s | diff %.2f s | speed x%.3f",
-                seq,
-                ms_to_seconds(entry["dur_ms"]),
-                ms_to_seconds(actual_ms),
-                ms_to_seconds(diff_ms),
-                round_3sec(speed_factor),
+            # Use pbar.write to avoid breaking the progress bar
+            pbar.write(
+                f"Segment {seq} | target {ms_to_seconds(entry['dur_ms']):.2f}s | "
+                f"actual {ms_to_seconds(actual_ms):.2f}s | diff {ms_to_seconds(diff_ms):.2f}s | "
+                f"speed x{round_3sec(speed_factor):.3f}"
             )
         except Exception as exc:
             logging.error("Segment %d: Failed to process audio: %s", seq, str(exc))
@@ -796,6 +785,9 @@ def run_tts_generation(args):
         return 0
 
     logging.info("Parsed %d subtitle entries.", len(entries))
+    total_dur_s = sum(ms_to_seconds(e["dur_ms"]) for e in entries)
+    logging.info("Total audio duration to synthesize: %.2f seconds", total_dur_s)
+    
     ensure_dir(config.out_dir)
     setup_python_path()
     

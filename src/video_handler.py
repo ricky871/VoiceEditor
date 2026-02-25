@@ -15,6 +15,7 @@ import logging
 import math
 from pathlib import Path
 from typing import Optional, Dict
+from tqdm import tqdm
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -130,7 +131,8 @@ class VideoEngine:
             max_rms = -1.0
             step = 5 * sr  # Step through in 5s increments
             
-            for start in range(0, len(y) - samples_per_window, step):
+            search_range = range(0, len(y) - samples_per_window, step)
+            for start in tqdm(search_range, desc="Analyzing audio for voice ref", unit="pos"):
                 window = y[start : start + samples_per_window]
                 rms = np.sqrt(np.mean(window**2))
                 # We want typical speech energy, usually higher than background but not clipping

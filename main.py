@@ -71,7 +71,7 @@ def cmd_run(args):
         input("Press ENTER after you have finished editing...")
 
     # 2. TTS Generation
-    logging.info("Step 2: Generating TTS from Subtitles")
+    logging.info("Step 2: Generating TTS from Subtitles (This may take several minutes)")
     # Mapping args to tts_generator expected format
     # We can either pass args directly if structured correctly, or manually map.
     tts_args = argparse.Namespace(
