@@ -1,63 +1,62 @@
-# VoiceEditor 开发方案与架构说明
+# VoiceEditor 技术架构与开发指南
 
-本文档详细说明了 `VoiceEditor` 项目的系统架构、核心流程以及各模块的技术实现。
+本文档面向开发者，深入解析 `VoiceEditor` 的核心逻辑、算法实现及管线流转机制。
 
-## 1. 项目概览
-`VoiceEditor` 是一个基于 **IndexTTS2** 的自动化视频配音与音频重构工具。它能一键完成：下载视频 -> 语音转写字幕 -> 提取参考音 -> 零样本语音克隆 -> 音视频自动混流。
+## 1. 系统架构全景
 
-### 核心特性
-- **一键式 CLI**：通过 `main.py` 统筹所有子任务。
-- **环境隔离**：深度利用 `uv` 进行依赖管理与镜像加速。
-- **精准对齐**：通过时戳驱动 TTS 推理，并自动进行音频伸缩补偿（Time Stretching）。
-- **跨平台支持**：原生支持 Windows 与 Linux，通过 Python 替代了复杂的 PowerShell 脚本。
+`VoiceEditor` 设计为典型的“三层架构”：
+1. **交互逻辑层 (main.py)**：负责参数解析、环境自检、SRT 手工干预逻辑及各阶段任务编排。
+2. **核心业务层 (src/)**：封装了视频下载、音频分析、TTS 片段推理的关键算法。
+3. **算法引擎层 (index-tts/)**：基于 `IndexTTS2` 的 GPT 模型底层推理接口。
 
-## 2. 目录结构
-```text
-VoiceEditor/
-├── main.py                 # 唯一入口，支持 setup 与 run 命令
-├── src/                    # 核心业务逻辑
-│   ├── setup_env.py        # 环境初始化与模型下载逻辑
-│   ├── video_handler.py    # 视频下载、音频提取、Whisper 转写
-│   ├── tts_generator.py    # IndexTTS2 推理、时戳匹配
-│   └── audio_merger.py     # 音频段拼合与 ffmpeg 混流
-├── index-tts/              # 上游算法引擎 (Git Submodule)
-├── checkpoints/            # 模型权重存储位
-├── .cache/                 # 镜像缓存 (HuggingFace/ModelScope)
-└── work/                   # 中间产物与输出目录
-```
+---
 
-## 3. 核心管道流程 (Pipeline)
+## 2. 核心算法解析
 
-### 阶段 1: 环境初始化 (`setup`)
-- **uv 同步**：利用 `uv sync` 在虚拟环境中安装所有依赖。
-- **镜像注入**：默认使用清华 TUNA 镜像源加速 Python 包安装。
-- **模型下载**：优先使用 **ModelScope** 下载 `IndexTeam/IndexTTS-2` 权重；若失败则切换至 **HF-Mirror**。
+### A. 智能参考音提取 (`src/video_handler.py`)
+程序并非随机提取音频，而是通过 **RMS (均方根) 能量检测** 在原音轨中寻找人声段：
+- 计算步长为 0.5s 的能量图。
+- 排除极端静音区，过滤掉低信噪比片段。
+- 最终选取一个连续 $10s$ 且能量最平稳的片段作为 TTS 的参考音色 (Ref Voice)，以最大程度降低环境噪音对克隆质量的干扰。
 
-### 阶段 2: 视频前处理 (`run`)
-- **yt-dlp**：下载高质量 MP4。
-- **ffmpeg**：抽取 PCM 16bit 44.1kHz 音轨。
-- **OpenAI Whisper**：生成带毫秒级时戳的 SRT 字幕。
-- **参考音提取**：基于能量检测（Librosa RMS）寻找原始音轨中最静寂的片段（通常为清晰人声），作为 TTS 的 Prompt。
+### B. 时长补偿对齐算法 (`src/tts_generator.py`)
+这是解决“音画不同步”的核心逻辑。IndexTTS2 的生成时长是概率性的，必须进行确定性对齐：
+1. **生成长度预测**：根据 SRT 每行时长 $T_{target}$，按 $150 Tokens/sec$ 计算期望生成的 Token 数。
+2. **偏差检测**：计算生成音频时长 $T_{actual}$ 与 $T_{target}$ 的比例 $R = T_{actual} / T_{target}$。
+3. **非线性微调 (Retiming)**：
+    - 若偏差 $\le 2\%$: 采用简单的 Padding (加噪补齐) 或 Truncation (截断)。
+    - 若偏差 $> 2\%$: 使用 `pydub.speedup` 与 `atempo` 滤镜进行**变速不变调**的精细收缩/拉伸。
 
-### 阶段 3: TTS 驱动合成
-- **时长匹配策略**：
-    1. 将 SRT 每一行的时间差 $T$ 映射到目标 Token 数：$Tokens = T \times 150.0$。
-    2. 使用 `max_mel_tokens` 约束生成长度。
-    3. 生成后通过 `pydub.speedup` 指数级调整语速（保持音调），确保最终音频贴合字幕轴。
-- **情感注入**：支持通过 `--emo-text` (如 "[happy]") 引导合成语气。
+### C. 环境沙盒化 (`src/setup_env.py`)
+基于 `uv sync` 实现零配置启动，自动注入 `HF_ENDPOINT` 环境变量以适配国内开发者。
 
-### 阶段 4: 后处理与混流
-- **Manifest 管理**：记录每一段语音的合成元数据（目标时长 vs 实际时长）。
-- **ffmpeg 混合**：
-    - 将新音频 (`-map 1:a:0`) 替换原视频音轨。
-    - **字幕处理**：支持外挂 (Soft) 或烧录 (Hardburn) 模式。在 Windows 下自动处理路径转义以兼容 ffmpeg 滤镜语法。
+---
 
-## 4. 路线图 (Roadmap)
-- [ ] **并行化推理**：利用多 GPU 或批量推理提高长视频处理速度。
-- [ ] **BGM 分离**：引入人声分离模型，配音后保留原始背景音乐（Vocal Removal）。
-- [ ] **WebUI 进阶版**：集成视频预览功能的低代码操作界面。
-- [ ] **流式支持**：支持生成实时预览。
+## 3. 详细处理流程 (COT Stage)
 
-## 5. 开发者备注
-- **路径管理**：始终以项目根目录作为 CWD 运行 `main.py`。
-- **Windows vs Linux**：`audio_merger.py` 已处理路径斜杠差异；`setup_env.py` 已移除平台专有的 Admin/Root 检测。
+`src/tts_generator.py` 内部遵循 10 阶段链式思考模型：
+1. **Stage 1-3**: 环境自检与 GPU 分配。
+2. **Stage 4**: 模型加载（自适应加载 `gpt.pth`, `s2mel.pth`）。
+3. **Stage 5**: SRT 编解码处理。
+4. **Stage 6**: **分段并发推理**：遍历字幕行，生成波形。
+5. **Stage 7**: 生成 `manifest.json` 记录所有对齐元数据。
+6. **Stage 8-9**: **Stitch & Mux**：音频无缝拼接与 FFmpeg 硬件加速合流。
+7. **Stage 10**: 度量指标展示与缓存清理。
+
+---
+
+## 4. 跨平台兼容性说明
+
+- **FFmpeg 滤镜**：在 Windows 下，SRT 字幕烧录 (`vf subtitles`) 的路径处理复杂。本项目在 `audio_merger.py` 中实现了专用的路径转义逻辑，通过 `replace(":", "\\:")` 解决了 Windows 下盘符冒号在 FFmpeg 滤镜字符串中的冲突问题。
+- **编码处理**：全链路采用 `UTF-8` 编码，支持多语言视频及字幕转写。
+
+---
+
+## 5. 开发路线图 (Roadmap)
+
+- [ ] **BGM 分离 (Vocal Removal)**：目前采用的是全音轨替换。后续计划集成 `UVR5/Demucs` 模型，提取背景音乐并与新配音混缩。
+- [ ] **并行推理优化**：长视频支持拆分多块并行处理，提升生成吞吐量。
+- [ ] **实时预览界面**：在编辑器修正 SRT 的同时，提供单句配音效果反馈。
+
+---
+*Last Updated: February 2026*
