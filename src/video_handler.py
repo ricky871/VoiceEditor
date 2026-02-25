@@ -4,7 +4,7 @@ Video Processing Engine for VoiceEditor
 Handles:
 - Downloading video (yt-dlp)
 - Audio extraction (ffmpeg)
-- Precise transcription (OpenAI Whisper)
+- Precise transcription (Faster-Whisper)
 - Selective voice reference extraction (Energy-based minimum noise search)
 """
 import os
@@ -69,27 +69,56 @@ class VideoEngine:
         success, _ = self._run_cmd(cmd, "ffmpeg extraction")
         return audio_path if success else None
 
+    def _format_timestamp(self, seconds: float) -> str:
+        ms = int(round((seconds % 1) * 1000))
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
     def transcribe(self, audio_path: Path, model_size: str = "small", lang: str = "zh") -> Optional[Path]:
-        logging.info(f"Transcribing audio using Whisper ({model_size})...")
+        logging.info(f"Transcribing audio using Faster-Whisper ({model_size})...")
         try:
-            import whisper
+            from faster_whisper import WhisperModel
+            from opencc import OpenCC
         except ImportError:
-            logging.error("whisper not found. Run 'uv pip install openai-whisper'")
+            logging.error("Missing libraries: faster-whisper or opencc. Run 'uv sync'")
             return None
 
-        # Run whisper via CLI for better memory management in subagent context, 
-        # or use internal API if preferred.
-        model = whisper.load_model(model_size)
-        result = model.transcribe(str(audio_path), language=lang, verbose=False)
+        # GPU logic
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        # float16 is standard for GPU, int8/int8_float16 for lower VRAM
+        compute_type = "float16" if device == "cuda" else "int8"
         
-        # Save as SRT
-        srt_path = audio_path.with_suffix(".srt")
-        from whisper.utils import get_writer
-        writer = get_writer("srt", str(srt_path.parent))
-        writer(result, str(audio_path.stem))
+        logging.info(f"Using device: {device} with compute_type: {compute_type}")
+        cc = OpenCC('t2s')
         
-        logging.info(f"Transcription saved to {srt_path}")
-        return srt_path
+        try:
+            model = WhisperModel(model_size, device=device, compute_type=compute_type)
+            # info contains basic info about the audio and language
+            # initial_prompt helps Nudge Whisper to use Simplified Chinese
+            segments, info = model.transcribe(
+                str(audio_path), 
+                language=lang, 
+                beam_size=5,
+                initial_prompt="以下是普通话的句子，请使用简体中文。"
+            )
+            
+            srt_path = audio_path.with_suffix(".srt")
+            with open(srt_path, "w", encoding="utf-8") as f:
+                for idx, segment in enumerate(segments, start=1):
+                    start_str = self._format_timestamp(segment.start)
+                    end_str = self._format_timestamp(segment.end)
+                    # Convert to Simplified Chinese
+                    simplified_text = cc.convert(segment.text.strip())
+                    f.write(f"{idx}\n{start_str} --> {end_str}\n{simplified_text}\n\n")
+            
+            logging.info(f"Transcription saved to {srt_path}")
+            return srt_path
+        except Exception as e:
+            logging.error(f"Transcription failed: {e}")
+            return None
 
     def extract_voice_ref(self, audio_path: Path, duration_sec: int = 10, srt_path: Optional[Path] = None) -> Optional[Path]:
         logging.info(f"Extracting {duration_sec}s voice reference...")

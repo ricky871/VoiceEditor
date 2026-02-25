@@ -1,0 +1,3 @@
+"""
+VoiceEditor Source package.
+"""

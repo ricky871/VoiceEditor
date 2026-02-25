@@ -18,15 +18,14 @@ from pathlib import Path
 # Add src to sys.path for direct imports
 sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
 
+from src.config import setup_environment, get_logging_config
+from src.resource_manager import ResourceManager
+
 def setup_logger(verbose=False):
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    logging.basicConfig(**get_logging_config(verbose))
 
 def cmd_setup(args):
+    setup_environment()
     from src.setup_env import setup_all
     logging.info("Starting Environment Setup...")
     if setup_all(cn_mirror=args.cn, skip_download=args.skip_download):
@@ -36,12 +35,17 @@ def cmd_setup(args):
         sys.exit(1)
 
 def cmd_run(args):
+    setup_environment()
     from src.video_handler import run_video_pipeline
     from src.tts_generator import run_tts_generation
     
+    # 0. Initialize Resources
+    res_manager = ResourceManager(work_dir=args.work_dir, out_dir=os.path.join(args.work_dir, "out_segs"))
+    res_manager.ensure_dirs()
+
     # 1. Video Processing
     logging.info(f"Step 1: Processing Video from {args.url}")
-    video_data = run_video_pipeline(args.url, args.work_dir, args.whisper_model, args.lang)
+    video_data = run_video_pipeline(args.url, str(res_manager.work_dir), args.whisper_model, args.lang)
     if not video_data:
         logging.error("Video processing failed.")
         sys.exit(1)
@@ -90,6 +94,7 @@ def cmd_run(args):
         stitch=args.stitch,
         sample_rate=44100,
         gain_db=-1.5,
+        diffusion_steps=args.diffusion_steps,
         video=video_data["video"],
         output_video=args.output,
         verbose=args.verbose
@@ -122,6 +127,7 @@ def main():
     run_parser.add_argument("--whisper-model", default="small")
     run_parser.add_argument("--lang", default="zh")
     run_parser.add_argument("--emo-text", default="", help="Emotion prompt for TTS")
+    run_parser.add_argument("--diffusion-steps", type=int, default=25, help="Diffusion steps for TTS")
 
     args = parser.parse_args()
     setup_logger(args.verbose)

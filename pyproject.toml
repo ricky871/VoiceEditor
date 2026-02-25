@@ -6,7 +6,7 @@ authors = [{ name = "YinLu" }]
 requires-python = ">=3.11, <3.13"
 dependencies = [
     "yt-dlp",
-    "openai-whisper",
+    "faster-whisper",
     "pysrt",
     "pydub",
     "librosa",
@@ -27,6 +27,7 @@ dependencies = [
     "cn2an",
     "pinyin",
     "jieba",
+    "opencc-python-reimplemented",
     "indextts",
 ]
 
