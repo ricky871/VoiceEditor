@@ -57,7 +57,8 @@ except Exception:
 _hf_cache_dir = PROJECT_ROOT / ".cache" / "hf"
 _hf_cache_dir.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_HF_ENDPOINT = "https://hf-mirror.com"
+# Try to use existing HF_ENDPOINT or default to the most stable mirror
+DEFAULT_HF_ENDPOINT = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
 DEFAULT_HF_HOME = str(_hf_cache_dir)
 
 def load_dotenv():

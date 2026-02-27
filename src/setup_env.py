@@ -37,6 +37,7 @@ def check_uv():
     if shutil.which("uv"):
         return True
     logging.error("uv not found. Please install it first: https://github.com/astral-sh/uv")
+    logging.error("Alternately, try: pip install uv")
     return False
 
 def sync_dependencies(cn_mirror=True):
@@ -73,19 +74,41 @@ def download_checkpoints(source="modelscope", local_dir="checkpoints"):
             return False
     else:
         # HuggingFace mode
-        env = os.environ.copy()
-        env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
         try:
             from huggingface_hub import snapshot_download
-            logging.info("Using HuggingFace snapshot_download (HF-Mirror)...")
-            snapshot_download(repo_id="IndexTeam/IndexTTS-2", local_dir=str(local_path))
-            logging.info("Models downloaded from HuggingFace successfully.")
         except ImportError:
             logging.error("huggingface_hub library not found. Run 'uv pip install huggingface-hub' first.")
             return False
-        except Exception as e:
-            logging.error(f"HuggingFace download failed: {e}")
+
+        # List of mirrors to try
+        mirrors = [
+            "https://hf-mirror.com",
+            "https://hf-cdn.sufy.com",
+            "http://aifasthub.com"
+        ]
+        
+        # Check if user already set one
+        if "HF_ENDPOINT" in os.environ:
+             current_endpoint = os.environ["HF_ENDPOINT"]
+             if current_endpoint not in mirrors:
+                 mirrors.insert(0, current_endpoint)
+
+        success = False
+        for mirror in mirrors:
+            try:
+                logging.info(f"Trying HuggingFace mirror: {mirror}...")
+                os.environ["HF_ENDPOINT"] = mirror
+                snapshot_download(repo_id="IndexTeam/IndexTTS-2", local_dir=str(local_path))
+                logging.info(f"Models downloaded from {mirror} successfully.")
+                success = True
+                break
+            except Exception as e:
+                logging.warning(f"Download failed from {mirror}: {e}")
+        
+        if not success:
+            logging.error("All HuggingFace mirrors failed.")
             return False
+            
     return True
 
 def setup_all(cn_mirror=True, skip_download=False):

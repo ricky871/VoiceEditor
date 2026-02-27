@@ -19,8 +19,16 @@
 本项目使用 [uv](https://github.com/astral-sh/uv) 管理依赖。
 
 ### 安装 uv
+**方法一（推荐）：**
 - **Windows**: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
 - **Linux/macOS**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
+**方法二（如果安装脚本被拦截）：**
+如果您所在的网络无法访问 `astral.sh` 或 GitHub，可以直接通过 pip 安装（需确保已配置国内 PyPI 镜像）：
+```bash
+pip install uv
+```
+或者手动下载单文件二进制包放到 PATH 环境变量路径中。
 
 ---
 
