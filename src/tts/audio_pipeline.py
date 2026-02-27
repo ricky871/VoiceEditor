@@ -28,16 +28,20 @@ def retime_segment_to_target(
 
     speed_factor = current / target
 
-    # Handle small differences with padding/truncation
-    if 0.98 <= speed_factor <= 1.02 or abs(current - target) < 50:
-        if current > target:
-            seg = seg[:target]
-        else:
-            padding = AudioSegment.silent(duration=target - current, frame_rate=seg.frame_rate)
-            seg = seg + padding
+    # 1. OPTIMIZATION: If generated speech is faster than target (shorter duration),
+    # do NOT slow it down. Instead, pad with silence to fill the target duration.
+    # This keeps natural speech rate and avoids "slow motion" effect.
+    if current < target:
+        padding = AudioSegment.silent(duration=target - current, frame_rate=seg.frame_rate)
+        seg = seg + padding
         return seg, len(seg), 1.0
 
-    # For larger differences, use librosa for quality time stretching
+    # Handle small differences (over-generated) with simple truncation
+    if 1.0 <= speed_factor <= 1.02 or (current - target) < 50:
+        seg = seg[:target]
+        return seg, len(seg), 1.0
+
+    # For larger differences (over-generated significantly), use librosa to speed up
     try:
         # 1. Convert AudioSegment to numpy array
         samples = np.array(seg.get_array_of_samples(), dtype=np.float32)

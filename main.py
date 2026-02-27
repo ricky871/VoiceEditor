@@ -157,4 +157,8 @@ def main():
         cmd_run(args)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n[!] 任务被用户中断。进度已保存，您可以随时再次运行此命令以继续。")
+        sys.exit(130)

@@ -130,8 +130,10 @@ class VideoEngine:
                 initial_prompt="以下是普通话的句子，请使用简体中文。"
             )
             
-            srt_path = audio_path.with_suffix(".srt")
-            with open(srt_path, "w", encoding="utf-8") as f:
+            final_srt_path = audio_path.with_suffix(".srt")
+            tmp_srt_path = audio_path.with_suffix(".srt.tmp") 
+            
+            with open(tmp_srt_path, "w", encoding="utf-8") as f:
                 for idx, segment in enumerate(segments, start=1):
                     start_str = self._format_timestamp(segment.start)
                     end_str = self._format_timestamp(segment.end)
@@ -139,10 +141,16 @@ class VideoEngine:
                     simplified_text = cc.convert(segment.text.strip())
                     f.write(f"{idx}\n{start_str} --> {end_str}\n{simplified_text}\n\n")
             
-            logging.info(f"Transcription saved to {srt_path}")
-            return srt_path
+            # Atomic rename
+            if tmp_srt_path.exists():
+                tmp_srt_path.replace(final_srt_path)
+
+            logging.info(f"Transcription saved to {final_srt_path}")
+            return final_srt_path
         except Exception as e:
             logging.error(f"Transcription failed: {e}")
+            if 'tmp_srt_path' in locals() and tmp_srt_path.exists():
+                tmp_srt_path.unlink()
             return None
 
     def extract_voice_ref(self, audio_path: Path, duration_sec: int = 10, srt_path: Optional[Path] = None) -> Optional[Path]:
@@ -241,10 +249,10 @@ def run_video_pipeline(url: str, work_dir: str = "work", model: str = "small", l
     # 打印预估时间
     if duration > 0:
         import torch
-        # 预估倍数：GPU约0.6倍总和，CPU约2.5倍
+        # 预估倍数：GPU约 1.2倍 (whisper+maskgct)，CPU约 15倍 (较慢)
         is_cuda = torch.cuda.is_available()
-        rtf = 0.6 if is_cuda else 2.5
-        est_seconds = max(10, int(duration * rtf))
+        rtf = 1.2 if is_cuda else 15.0
+        est_seconds = max(20, int(duration * rtf))
         
         if est_seconds < 60:
             est_str = f"{est_seconds}秒"
@@ -258,7 +266,14 @@ def run_video_pipeline(url: str, work_dir: str = "work", model: str = "small", l
     if not audio: return None
     
     srt = engine.transcribe(audio, model_size=model, lang=lang)
+    if not srt:
+        logging.error("转写失败，无法继续。")
+        return None
+
     ref = engine.extract_voice_ref(audio, srt_path=srt)
+    if not ref:
+        logging.error("参考音频提取失败，无法继续。")
+        return None
     
     return {
         "video": str(video),
