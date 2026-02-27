@@ -1,4 +1,4 @@
-# VoiceEditor (基于 IndexTTS2)
+# VoiceEditor (powered by IndexTTS2)
 
 `VoiceEditor` 是一个全自动、交互式的视频配音与语音重构工具。它集成了视频下载、语音转写、零样本 (Zero-Shot) 语音克隆及音画自动同步算法，旨在为视频创作者提供一键式的本地化配音方案。
 
@@ -6,91 +6,84 @@
 
 ## ✨ 核心特性
 
-- **🚀 极简工作流**：从视频 URL 到成品配音视频，仅需一行命令。
-- **🎙️ 零样本语音克隆**：基于 **IndexTTS2** 引擎，仅需 10 秒参考音频即可复刻原片音色。
-- **📝 交互式校对**：自动生成字幕并暂停，允许人工修正转写错误后继续合成。
-- **⏳ 智能对齐**：采用 `Time Stretching` (时延补偿) 算法，确保配音时长与原片口型/字幕轴严格对齐。
-- **🌐 环境隔离**：基于 `uv` 构建，无需担心 Python 环境污染，支持国内外镜像一键加速。
+- **🚀 极简工作流**：支持视频 URL（Bilibili/YouTube）或本地文件，一行命令完成全流程。
+- **🎙️ 零样本语音克隆**：基于 **IndexTTS2** 引擎，仅需 10 秒参考音频即可精准复刻原片音色。
+- **📝 交互式校对**：自动生成字幕并智能弹出编辑器，允许人工修正文字/时间轴后继续合成。
+- **⏳ 智能对齐**：采用 `Time Stretching` (时延补偿) 算法与 FFmpeg 变速不变调滤镜，确保音画严丝合缝。
+- **⚡ 硬件加速**：原生支持 CUDA, MPS (Mac), XPU (Intel) 及 CPU 推理；内置 OpenVINO 模型适配（开发中）。
+- **🌐 一键环境搭建**：基于 `uv` 构建，自动补齐 Python 环境及 5GB+ 模型权重，国内镜像全加速。
 
 ---
 
-## 🛠️ 前提条件
+## 🛠️ 环境准备
 
-本项目使用 [uv](https://github.com/astral-sh/uv) 管理依赖。
+本项目强制使用 [uv](https://github.com/astral-sh/uv) 进行管理，不再建议手动配置虚拟环境。
 
-### 安装 uv
-**方法一（推荐）：**
+### 1. 安装 uv
 - **Windows**: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
 - **Linux/macOS**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-**方法二（如果安装脚本被拦截）：**
-如果您所在的网络无法访问 `astral.sh` 或 GitHub，可以直接通过 pip 安装（需确保已配置国内 PyPI 镜像）：
+### 2. 初始化环境与权重
+针对中国大陆用户，默认已启用 ModelScope 和 TUNA 镜像：
 ```bash
-pip install uv
+uv run main.py setup
 ```
-或者手动下载单文件二进制包放到 PATH 环境变量路径中。
+*该步将安装 Python 3.11 并自动下载所有必需的模型 Checkpoints。*
 
 ---
 
 ## 🚦 快速开始
 
-### 1. 环境初始化
-针对中国大陆用户，默认使用 ModelScope 和 TUNA 镜像：
+### 执行全流程配音
+直接输入视频链接（支持 Bilibili、YouTube 或本地路径）：
 ```bash
-uv run main.py setup --cn
-```
-*此操作将完成：安装 Python 3.10、同步依赖、下载约 5GB 的 IndexTTS2 模型权重。*
+# 极简模式 (默认启用 stitch 合成)
+uv run main.py "https://www.bilibili.com/video/BV1qctczUEfn"
 
-### 2. 执行全流程配音
-提供一个 Bilibili、YouTube 或其他 `yt-dlp` 支持的链接：
-```bash
-uv run main.py run --url "https://www.bilibili.com/video/BV1px411A7m3" --stitch
+# 完整模式 (指定输出路径与扩散步数)
+uv run main.py run --url "YOUR_URL" --output "result.mp4" --diffusion-steps 30
 ```
-**运行过程中的关键交互：**
-1. **自动下载与转写**：生成 SRT 字幕。
-2. **人工干预**：程序会自动调起系统默认编辑器打开 SRT。
-3. **编辑并保存**：在编辑器中修正文字，保存并**关闭**编辑器。
-4. **触发合成**：返回终端按 `ENTER`，程序将根据修正后的文字进行语音克隆与视频封装。
+
+**运行中的关键交互：**
+1. **自动提取**：程序从原片智能选取信噪比最高的人声音段作为参考。
+2. **人工干预**：自动唤起系统编辑器打开转换后的 SRT 字幕。
+3. **编辑修正**：在编辑器中修正错别字或调整断句，**保存并关闭**编辑器。
+4. **合成封装**：返回终端按 `ENTER`，程序将按修正后的内容进行克隆并合成最终视频。
 
 ---
 
 ## 📖 命令行参数详解
 
-### `main.py setup`
-| 参数 | 说明 |
-| :--- | :--- |
-| `--cn` | 启用国内镜像 (ModelScope/TUNA)。**默认开启。** |
-| `--skip-download` | 仅更新环境依赖，跳过模型下载。 |
-
-### `main.py run`
-| 参数 | 说明 |
-| :--- | :--- |
-| `--url` | **(必选)** 视频链接或本地视频路径。 |
-| `--work-dir` | 中间产物目录，默认 `./work`。 |
-| `--whisper-model` | 转写模型等级 (`tiny`, `small`, `base`, `medium`, `large-v3`)，默认 `small`。 |
-| `--lang` | 目标语言代码，默认 `zh`。 |
-| `--stitch` | 是否自动将生成的音频片段合成到原视频中。 |
-| `--emo-text` | 情感引导词，例如 `[happy]` 或 `[fast-paced]`（依赖模型支持）。 |
+### `main.py run` (主任务)
+| 参数 | 简写 | 说明 | 默认值 |
+| :--- | :--- | :--- | :--- |
+| `url` | (位置参数) | 视频链接 (Youtube/Bili) 或本地文件路径 | **(必选)** |
+| `--output` | `-o` | 最终合成视频的输出路径 | `work/output.mp4` |
+| `--work-dir` | - | 中间产物目录 | `work` |
+| `--stitch` | - | 是否将生成的音频合回视频 | `True` |
+| `--lang` | - | 目标语言代码 (如 `zh`, `en`) | `zh` |
+| `--diffusion-steps`| - | TTS 采样步数 (越高质越好，越慢) | `25` |
+| `--whisper-model` | - | 转写模型 (`base`, `small`, `medium`, `large-v3`) | `small` |
+| `--emo-text` | - | 情感引导词，例如 `[happy]` 或 `[fast-paced]` | `""` |
+| `--verbose` | `-v` | 显示详细推理进度与日志 | `False` |
 
 ---
 
-## 📁 目录结构
+## 📁 项目结构
 
-- [main.py](main.py): 项目唯一入口。
-- [src/](src/): 核心业务模块（包含环境准备、视频处理、TTS 生成、音频合并）。
-- [index-tts/](index-tts/): 核心算法引擎。
-- [checkpoints/](checkpoints/): 模型权重存储位。
-- [work/](work/): 存放生成的音频片段、SRT 字幕及最终视频。
-
----
-
-## 🤝 贡献与反馈
-
-- **技术细节**：请参阅 [DEVELOPMENT.md](DEVELOPMENT.md) 了解对齐算法与系统架构。
-- **模型说明**：核心算法基于 [IndexTeam/IndexTTS-2](https://github.com/IndexTeam/IndexTTS-2)。
+- [main.py](main.py): 统一入口，支持 `setup` 和 `run` 子命令。
+- [src/](src/): 核心逻辑（资源管理、视频流水线、TTS 推理、FFmpeg 合流）。
+- [index-tts/](index-tts/): 算法后端 (Submodule)。
+- [checkpoints/](checkpoints/): 模型权重与 OpenVINO XML 定义。
+- [work/](work/): 临时产物目录，存放生成的音频片段与中间 SRT。
 
 ---
-*Powered by IndexTTS2 & OpenAI Whisper*
+
+## 🤝 开发者参考
+
+若需了解对齐算法实现或其他技术细节，请参阅 [DEVELOPMENT.md](DEVELOPMENT.md)。
+
+*Powered by IndexTTS2, OpenAI Whisper & uv*
 
 
 
