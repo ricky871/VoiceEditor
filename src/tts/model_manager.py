@@ -20,7 +20,7 @@ class TTSModelManager:
         index_tts_path = project_root / "index-tts"
         if index_tts_path.exists() and str(index_tts_path) not in sys.path:
             sys.path.insert(0, str(index_tts_path))
-            logging.info(f"Added {index_tts_path} to the front of sys.path.")
+            # logging.info(f"Added {index_tts_path} to the front of sys.path.")
 
     def load_model(self, use_fp16: bool = True, use_cuda: bool = True):
         """Load IndexTTS2 model with appropriate configuration."""
@@ -35,13 +35,23 @@ class TTSModelManager:
             )
             raise
 
-        logging.info(f"Initializing IndexTTS2 with config: {self.cfg_path}")
+        # Auto-detect DeepSpeed
+        use_ds = False
+        try:
+            import deepspeed
+            use_ds = True
+            logging.info("DeepSpeed detected. Enabling for faster inference.")
+        except ImportError:
+            # logging.info("DeepSpeed not found. Running in standard mode.") 
+            pass
+
+        # logging.info(f"Initializing IndexTTS2 with config: {self.cfg_path}")
         self.tts = IndexTTS2(
             cfg_path=str(self.cfg_path),
             model_dir=str(self.model_dir),
             use_fp16=use_fp16,
             use_cuda_kernel=False, # Custom kernels may fail on some systems
-            use_deepspeed=False,  # Keep simple by default
+            use_deepspeed=use_ds,
         )
         return self.tts
 

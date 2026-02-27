@@ -28,21 +28,26 @@ ENV/
 
 # Project Specific
 .cache/
-checkpoints/*
-!checkpoints/*.yaml
-!checkpoints/*.json
-!checkpoints/*.md
-!checkpoints/LICENSE*
+checkpoints/
+!checkpoints/config.yaml
+!checkpoints/configuration.json
 !checkpoints/pinyin.vocab
 !checkpoints/bpe.model
+!checkpoints/*.md
+!checkpoints/LICENSE*
 work/
 outputs/
 *.log
+.env
+.ipynb_checkpoints/
+uv.lock
 
 # Media files (generated)
 *.wav
 *.mp4
 *.srt
+*.mp3
+*.m4a
 
 # IDEs
 .vscode/

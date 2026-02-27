@@ -21,7 +21,7 @@ def run_tts_generation(args):
     """Entry point for TTS generation using the modular components."""
     # 0. Setup Environment and Logging
     setup_environment()
-    logging.basicConfig(**get_logging_config(args.verbose))
+    # logging.basicConfig(**get_logging_config(args.verbose)) # Already configured in main
     
     # 1. Configuration & Resource Management
     config = Config.from_args(args)
@@ -38,22 +38,22 @@ def run_tts_generation(args):
     try:
         srt_path = SRTProcessor.resolve_path(config.srt_pattern)
     except FileNotFoundError:
-        logging.error(f"Subtitle pattern {config.srt_pattern} matched nothing.")
+        logging.error(f"找不到字幕文件: {config.srt_pattern}")
         return 1
 
     entries = SRTProcessor.parse(srt_path)
     if not entries:
-        logging.warning("No valid subtitles found.")
+        logging.warning("字幕文件为空或无效。")
         return 0
 
-    logging.info(f"Loaded {len(entries)} subtitle entries.")
+    logging.debug(f"已加载 {len(entries)} 条字幕。")
     
     # 3. Model Loading
     try:
         tts = mod_manager.load_model()
-        logging.info("TTS model loaded successfully.")
+        # logging.info("TTS model loaded successfully.")
     except Exception as exc:
-        logging.error(f"Failed to load TTS model: {exc}")
+        logging.error(f"模型加载失败: {exc}")
         return 2
 
     # 4. Synthesis Orchestration
@@ -62,7 +62,7 @@ def run_tts_generation(args):
     manifest, err_code = synthesizer.synthesize(entries)
     
     if not manifest:
-        logging.error("No audio segments generated.")
+        logging.error("没有生成任何语音片段。")
         return 1
 
     # 5. Manifest Saving & Final Audio Processing
@@ -74,7 +74,7 @@ def run_tts_generation(args):
         # Ensure parent exists
         final_audio_path.parent.mkdir(parents=True, exist_ok=True)
         final_audio.export(str(final_audio_path), format="wav")
-        logging.info(f"Merged audio saved to {final_audio_path}")
+        logging.info(f">> 合并后的音频已保存至: {final_audio_path}")
 
         video_src = config.video if config.video else SRTProcessor.guess_video(srt_path)
         if video_src and video_src.exists():
@@ -82,12 +82,12 @@ def run_tts_generation(args):
             output_vid = config.output_video if config.output_video else default_vid_out
             try:
                 mux_audio_video(video_src, final_audio_path, output_vid)
-                logging.info(f"Dubbed video created: {output_vid}")
+                logging.info(f">> 成功合并音频到视频: {output_vid}")
             except RuntimeError:
                 return 1
 
     elapsed = time.time() - start_time
-    logging.info(f"Synthesis completed in {elapsed:.2f} seconds.")
+    logging.info(f">> TTS 生成成功，耗时 {elapsed:.2f} 秒")
     return 0
 
 def main() -> int:

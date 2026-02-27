@@ -18,12 +18,13 @@ from typing import Optional, Dict
 from tqdm import tqdm
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+# logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 class VideoEngine:
-    def __init__(self, work_dir: str = "work"):
+    def __init__(self, work_dir: str = "work", verbose: bool = False):
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(parents=True, exist_ok=True)
+        self.verbose = verbose
         
     def _run_cmd(self, cmd, desc="Command"):
         logging.info(f"Running {desc}: {' '.join(cmd)}")
@@ -33,8 +34,8 @@ class VideoEngine:
             return False, result.stderr
         return True, result.stdout
 
-    def download_video(self, url: str) -> Optional[Path]:
-        logging.info(f"Downloading video from {url}...")
+    def download_video(self, url: str) -> Optional[tuple[Path, float]]:
+        logging.info(f">> 开始处理视频: {url}")
         try:
             import yt_dlp
         except ImportError:
@@ -49,17 +50,36 @@ class VideoEngine:
             'retries': 10,
             'fragment_retries': 10,
             'retry_sleep_functions': {'http': lambda n: 5 * (n + 1)},
+            'quiet': True,
+            'no_warnings': True,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            # First, extract info without downloading to check filename
+            info = ydl.extract_info(url, download=False)
+            logging.info(f">> 视频信息: {info.get('title', 'Unknown')}")
             video_path = Path(ydl.prepare_filename(info))
-            logging.info(f"Video downloaded to {video_path}")
-            return video_path
+            duration = float(info.get('duration', 0))
+
+            if video_path.exists() and video_path.stat().st_size > 0:
+                return video_path, duration
+            
+            # If not exists, download
+            ydl.process_info(info)
+            
+        # Re-run for actual download if we didn't return above
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+             info = ydl.extract_info(url, download=True)
+             video_path = Path(ydl.prepare_filename(info))
+             duration = float(info.get('duration', 0))
+             return video_path, duration
 
     def extract_audio(self, video_path: Path) -> Optional[Path]:
         audio_path = video_path.with_suffix(".wav")
-        logging.info(f"Extracting audio to {audio_path}...")
+        if audio_path.exists() and audio_path.stat().st_size > 0:
+            return audio_path
+
+        # logging.info(f"Extracting audio...")
         
         cmd = [
             "ffmpeg", "-y", "-i", str(video_path),
@@ -77,7 +97,12 @@ class VideoEngine:
         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
     def transcribe(self, audio_path: Path, model_size: str = "small", lang: str = "zh") -> Optional[Path]:
-        logging.info(f"Transcribing audio using Faster-Whisper ({model_size})...")
+        srt_path = audio_path.with_suffix(".srt")
+        if srt_path.exists() and srt_path.stat().st_size > 0:
+             logging.info(f">> 缓存命中: {srt_path.name}")
+             return srt_path
+
+        logging.info(f">> 开始转写生成字幕 ({model_size})...")
         try:
             from faster_whisper import WhisperModel
             from opencc import OpenCC
@@ -91,7 +116,7 @@ class VideoEngine:
         # float16 is standard for GPU, int8/int8_float16 for lower VRAM
         compute_type = "float16" if device == "cuda" else "int8"
         
-        logging.info(f"Using device: {device} with compute_type: {compute_type}")
+        # logging.info(f"Using device: {device} with compute_type: {compute_type}")
         cc = OpenCC('t2s')
         
         try:
@@ -121,7 +146,12 @@ class VideoEngine:
             return None
 
     def extract_voice_ref(self, audio_path: Path, duration_sec: int = 10, srt_path: Optional[Path] = None) -> Optional[Path]:
-        logging.info(f"Extracting {duration_sec}s voice reference...")
+        out_path = self.work_dir / f"{srt_path.stem}_voice.wav" if srt_path else self.work_dir / "voice_ref.wav"
+        if out_path.exists() and out_path.stat().st_size > 0:
+             logging.info(f">> 缓存命中: {out_path}")
+             return out_path
+
+        # logging.info(f"Extracting voice reference...")
         try:
             import librosa
             import soundfile as sf
@@ -129,58 +159,101 @@ class VideoEngine:
         except ImportError:
             logging.error("Missing audio analysis libs. Run 'uv pip install librosa soundfile'")
             return None
-            
-        y, sr = librosa.load(str(audio_path), sr=None)
         
-        # Split into windows of duration_sec
-        samples_per_window = duration_sec * sr
-        if len(y) < samples_per_window:
-            samples_per_window = len(y)
-            
-        best_start = 0
+        y = None
+        sr = 44100 
         
+        def load_chunk(start_sec, dur_sec):
+            with sf.SoundFile(str(audio_path)) as f:
+                f.seek(max(0, int(start_sec * f.samplerate)))
+                frames_to_read = int(dur_sec * f.samplerate)
+                if frames_to_read > (f.frames - f.tell()):
+                    frames_to_read = f.frames - f.tell()
+                data = f.read(frames_to_read)
+                if len(data.shape) > 1:
+                    data = data.mean(axis=1)
+                return data, f.samplerate
+
         # Strategy 1: Use SRT to find a segment with confirmed speech
         if srt_path and srt_path.exists():
             try:
                 import pysrt
                 subs = pysrt.open(str(srt_path))
                 if len(subs) > 0:
-                    # Pick a subtitle somewhere early-to-mid to ensure good voice clarity
                     idx = min(len(subs) // 4, 10) 
-                    if idx >= len(subs): idx = 0
-                    
-                    best_start = int((subs[idx].start.ordinal / 1000.0) * sr)
-                    logging.info(f"Using SRT to find voice reference at sample {best_start} (sub index {idx})")
+                    start_time = subs[idx].start.ordinal / 1000.0
+                    # logging.info(f"Loading partial audio from {start_time}s based on SRT...")
+                    try:
+                        # Load 30s to have some buffer to find the best window
+                        y, sr = load_chunk(start_time, duration_sec * 3)
+                    except Exception as e:
+                        logging.warning(f"Failed to load chunk: {e}")
             except Exception as e:
-                logging.warning(f"Failed to use SRT for voice ref extraction: {e}")
-        
-        # Strategy 2: Fallback to Peak Energy Search if SRT failed or wasn't provided
-        if best_start == 0:
-            logging.info("Searching for highest energy segment for voice reference...")
-            max_rms = -1.0
-            step = 5 * sr  # Step through in 5s increments
-            
-            search_range = range(0, len(y) - samples_per_window, step)
-            for start in tqdm(search_range, desc="Analyzing audio for voice ref", unit="pos"):
-                window = y[start : start + samples_per_window]
-                rms = np.sqrt(np.mean(window**2))
-                # We want typical speech energy, usually higher than background but not clipping
-                if rms > max_rms and rms < 0.5: 
-                    max_rms = rms
-                    best_start = start
-                
-        ref_path = audio_path.parent / "voice_ref.wav"
-        y_ref = y[best_start : best_start + samples_per_window]
-        sf.write(str(ref_path), y_ref, sr)
-        
-        logging.info(f"Voice reference saved to {ref_path}")
-        return ref_path
+                logging.warning(f"Error using SRT: {e}")
 
-def run_video_pipeline(url: str, work_dir: str = "work", model: str = "small", lang: str = "zh"):
-    engine = VideoEngine(work_dir)
-    video = engine.download_video(url)
-    if not video: return None
+        # Strategy 2: If no data yet, load start of file
+        if y is None or len(y) == 0:
+             logging.info("Loading first 2 minutes of audio for voice ref search...")
+             try:
+                 y, sr = load_chunk(0, 120)
+             except Exception:
+                 # Fallback to full load if sf fails (e.g. format issues)
+                 y, sr = librosa.load(str(audio_path), sr=None)
+
+        if y is None or len(y) == 0:
+             logging.error("Failed to load any audio.")
+             return None
+
+        # Extract best window from loaded audio 'y'
+        samples_per_window = int(duration_sec * sr)
+        if len(y) < samples_per_window:
+            samples_per_window = len(y)
+            
+        best_start = 0
+        max_rms = -1.0
+        step = int(1.0 * sr) # Step 1s
+        
+        search_range = range(0, len(y) - samples_per_window, step)
+        for start in tqdm(search_range, desc="正在分析最佳音色切片", unit="win", disable=not self.verbose):
+            window = y[start : start + samples_per_window]
+            rms = np.sqrt(np.mean(window**2))
+            # Prefer loud but not clipping segments
+            if rms > max_rms and rms < 0.5: 
+                max_rms = rms
+                best_start = start
+                
+        # Save the best segment
+        best_segment = y[best_start : best_start + samples_per_window]
+        out_path = self.work_dir / f"{srt_path.stem}_voice.wav"
+        sf.write(str(out_path), best_segment, sr)
+        
+        logging.info(f">> 音色提取成功")
+        return out_path
+
+
+
+def run_video_pipeline(url: str, work_dir: str = "work", model: str = "small", lang: str = "zh", verbose: bool = False):
+    engine = VideoEngine(work_dir, verbose=verbose)
+    result = engine.download_video(url)
+    if not result: return None
+    video, duration = result
     
+    # 打印预估时间
+    if duration > 0:
+        import torch
+        # 预估倍数：GPU约0.6倍总和，CPU约2.5倍
+        is_cuda = torch.cuda.is_available()
+        rtf = 0.6 if is_cuda else 2.5
+        est_seconds = max(10, int(duration * rtf))
+        
+        if est_seconds < 60:
+            est_str = f"{est_seconds}秒"
+        else:
+            est_str = f"{est_seconds // 60}分{est_seconds % 60}秒"
+            
+        mode_str = "GPU加速" if is_cuda else "CPU (较慢)"
+        logging.info(f">> 预计处理耗时: 约 {est_str} (模式: {mode_str})")
+
     audio = engine.extract_audio(video)
     if not audio: return None
     
@@ -191,7 +264,8 @@ def run_video_pipeline(url: str, work_dir: str = "work", model: str = "small", l
         "video": str(video),
         "audio": str(audio),
         "srt": str(srt),
-        "voice_ref": str(ref)
+        "voice_ref": str(ref),
+        "duration": duration
     }
 
 if __name__ == "__main__":

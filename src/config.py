@@ -1,10 +1,57 @@
 import os
 import logging
+import warnings
+import re
 from pathlib import Path
 from typing import Optional, Any
 
 # Projects Root
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+# Silently suppress the noise as early as possible
+warnings.filterwarnings("ignore", module="transformers")
+warnings.filterwarnings("ignore", module="torch")
+warnings.filterwarnings("ignore", module="urllib3")
+warnings.filterwarnings("ignore", message=".*GPT2InferenceModel.*")
+warnings.filterwarnings("ignore", message=".*past_key_values.*")
+warnings.filterwarnings("ignore", message=".*TypedStorage.*")
+warnings.filterwarnings("ignore", message=".*directly inherit from `GenerationMixin`.*")
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+def patch_tqdm(disable=True):
+    """Globally disable or enable tqdm progress bars."""
+    try:
+        from tqdm import tqdm as real_tqdm
+        from functools import partial
+        import tqdm
+        # We replace the class itself OR its constructor
+        if disable:
+            tqdm.tqdm = partial(real_tqdm, disable=True)
+            # Some libraries might import tqdm specifically, we try to cover bases
+            try:
+                import tqdm.notebook as tqdm_nb
+                tqdm_nb.tqdm = partial(tqdm_nb.tqdm, disable=True)
+            except ImportError:
+                pass
+    except ImportError:
+        pass
+
+# Configure all major noisy loggers to ERROR level
+try:
+    import logging as py_logging
+    # Try multiple common name variants
+    for log_name in ["transformers", "diffusers", "urllib3", "huggingface_hub", "torch"]:
+        py_logging.getLogger(log_name).setLevel(py_logging.ERROR)
+except Exception:
+    pass
+
+try:
+    import logging as py_logging
+    py_logging.getLogger("transformers").setLevel(py_logging.ERROR)
+except Exception:
+    pass
 
 # HuggingFace Mirror & Cache (Defaults for China-based users)
 _hf_cache_dir = PROJECT_ROOT / ".cache" / "hf"
@@ -34,7 +81,7 @@ def setup_environment():
     os.environ.setdefault("HF_ENDPOINT", DEFAULT_HF_ENDPOINT)
     os.environ.setdefault("HF_HOME", DEFAULT_HF_HOME)
     os.environ.setdefault("HUGGINGFACE_HUB_CACHE", DEFAULT_HF_HOME)
-
+    
 # Default Paths
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 WORK_DIR = PROJECT_ROOT / "work"
@@ -119,8 +166,21 @@ class Config:
         self.out_dir = self.out_dir.resolve()
 
 def get_logging_config(verbose: bool = False):
+    """
+    Returns logging configuration.
+    Simplified format for cleaner terminal output.
+    """
+    # Suppress noisy libraries
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("filelock").setLevel(logging.WARNING)
+    logging.getLogger("fsspec").setLevel(logging.WARNING)
+    logging.getLogger("jieba").setLevel(logging.WARNING)
+    logging.getLogger("numba").setLevel(logging.WARNING)
+    logging.getLogger("matplotlib").setLevel(logging.WARNING)
+    logging.getLogger("transformers").setLevel(logging.ERROR) # Suppress warnings
+
     return {
         "level": logging.DEBUG if verbose else logging.INFO,
-        "format": "%(asctime)s %(levelname)s %(message)s",
+        "format": "%(message)s" if not verbose else "%(asctime)s %(levelname)s %(message)s",
         "datefmt": "%H:%M:%S",
     }

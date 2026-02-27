@@ -101,7 +101,7 @@ class TTSSynthesizer:
 
         manifest = []
         failed = []
-        pbar = tqdm(entries, desc="Generating TTS", unit="seg")
+        pbar = tqdm(entries, desc="正在生成语音", unit="句", disable=not self.config.verbose)
         for seq, entry in enumerate(pbar, start=1):
             seg_path = self.config.out_dir / f"seg_{seq:04d}.wav"
             if seq in existing and seg_path.exists():
@@ -143,4 +143,4 @@ class TTSSynthesizer:
         if manifest:
             t_tar = sum(m["dur_target_ms"] for m in manifest) / 1000.0
             t_act = sum(m["dur_actual_ms"] for m in manifest) / 1000.0
-            logging.info(f"Manifest saved. Target: {t_tar:.2f}s, Actual: {t_act:.2f}s.")
+            logging.info(f">> 生成清单已保存。目标时长: {t_tar:.2f}秒, 实际时长: {t_act:.2f}秒。")
