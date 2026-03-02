@@ -1,9 +1,9 @@
 [project]
 name = "voiceeditor"
-version = "1.00"
+version = "1.0.0"
 description = "Unified Video Dubbing & Voice Synthesis Wrapper for IndexTTS2"
 authors = [{ name = "YinLu" }]
-requires-python = ">=3.11, <3.13"
+requires-python = ">=3.11, <3.12"
 dependencies = [
     "yt-dlp",
     "faster-whisper",
