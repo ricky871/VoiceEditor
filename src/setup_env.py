@@ -126,6 +126,49 @@ def setup_all(cn_mirror=True, skip_download=False):
         if not download_checkpoints(source=source):
             return False
             
+        # Download Whisper models in advance
+        try:
+            from faster_whisper import WhisperModel
+            import torch
+            logging.info("Pre-downloading Whisper models...")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            compute_type = "float16" if device == "cuda" else "int8"
+            # Default models to pre-download
+            for model_size in ["small", "medium"]:
+                logging.info(f"Downloading Whisper model: {model_size}...")
+                WhisperModel(model_size, device=device, compute_type=compute_type)
+        except Exception as e:
+            logging.warning(f"Failed to pre-download Whisper models: {e}. They will be downloaded during first run.")
+
+        # Download secondary Hub models (MaskGCT, SeamlessM4T, CAMPPlus, BigVGAN)
+        try:
+            logging.info("Pre-downloading auxiliary models from HuggingFace/ModelScope...")
+            from huggingface_hub import hf_hub_download
+            from transformers import SeamlessM4TFeatureExtractor
+            
+            # 1. SeamlessM4T
+            SeamlessM4TFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
+            
+            # 2. MaskGCT semantic codec
+            hf_hub_download("amphion/MaskGCT", filename="semantic_codec/model.safetensors")
+            
+            # 3. CAMPPlus
+            hf_hub_download("funasr/campplus", filename="campplus_cn_common.bin")
+            
+            # 4. BigVGAN (Common default)
+            try:
+                # Add index-tts to path if not exists
+                src_dir = Path(__file__).parent
+                if (src_dir.parent / "index-tts").exists():
+                    sys.path.append(str(src_dir.parent / "index-tts"))
+                from indextts.s2mel.modules.bigvgan import bigvgan
+                bigvgan.BigVGAN.from_pretrained("nvidia/bigvgan_v2_24khz_80band_256x")
+            except:
+                pass
+
+        except Exception as e:
+            logging.warning(f"Failed to pre-download some auxiliary models: {e}")
+
     logging.info("Setup process completed successfully.")
     return True
 
