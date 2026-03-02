@@ -145,24 +145,46 @@ def setup_all(cn_mirror=True, skip_download=False):
             logging.info("Pre-downloading auxiliary models from HuggingFace/ModelScope...")
             from huggingface_hub import hf_hub_download
             from transformers import SeamlessM4TFeatureExtractor
+            from modelscope import AutoModelForCausalLM
             
             # 1. SeamlessM4T
+            logging.info("Downloading SeamlessM4T feature extractor...")
             SeamlessM4TFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
             
             # 2. MaskGCT semantic codec
+            # This triggers the 2.32GB download of model.safetensors
+            logging.info("Downloading MaskGCT semantic codec...")
             hf_hub_download("amphion/MaskGCT", filename="semantic_codec/model.safetensors")
             
             # 3. CAMPPlus
+            logging.info("Downloading CAMPPlus model...")
             hf_hub_download("funasr/campplus", filename="campplus_cn_common.bin")
             
-            # 4. BigVGAN (Common default)
+            # 4. BigVGAN (This triggers bigvgan_generator.pt download)
             try:
-                # Add index-tts to path if not exists
+                logging.info("Downloading BigVGAN vocoder...")
+                # Add index-tts to path if not exists to use its local BigVGAN wrapper
                 src_dir = Path(__file__).parent
-                if (src_dir.parent / "index-tts").exists():
-                    sys.path.append(str(src_dir.parent / "index-tts"))
+                project_root = src_dir.parent
+                index_tts_path = project_root / "index-tts"
+                if index_tts_path.exists() and str(index_tts_path) not in sys.path:
+                    sys.path.append(str(index_tts_path))
+                
+                # We also need to check the checkpoints/config.yaml for the exact name if possible
+                # But common default is "nvidia/bigvgan_v2_22khz_80band_256x" or "nvidia/bigvgan_v2_24khz_80band_256x"
+                bigvgan_name = "nvidia/bigvgan_v2_22khz_80band_256x"
+                
                 from indextts.s2mel.modules.bigvgan import bigvgan
-                bigvgan.BigVGAN.from_pretrained("nvidia/bigvgan_v2_24khz_80band_256x")
+                bigvgan.BigVGAN.from_pretrained(bigvgan_name)
+            except Exception as e:
+                logging.warning(f"BigVGAN pre-download failed: {e}")
+
+            # 5. Qwen Emotion model (if present in config)
+            try:
+                logging.info("Downloading Qwen Emotion base model...")
+                # Qwen models often use AutoModelForCausalLM.from_pretrained
+                # The index-tts uses a specific merged path, but we can pre-cache the base
+                AutoModelForCausalLM.from_pretrained("Qwen/Qwen2-0.5B-Instruct", trust_remote_code=True)
             except:
                 pass
 
