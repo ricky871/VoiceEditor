@@ -99,28 +99,41 @@ def stitch_segments_from_manifest(
     ).set_channels(1)
 
     for entry in tqdm(manifest, desc="Stitching segments", unit="seg"):
-        wav_path = Path(entry["wav"])
+        raw_wav = entry["wav"]
+        # Handle Windows-style paths encoded in JSON (e.g., D:\\Path) on Linux
+        if "\\" in raw_wav and "/" not in raw_wav:
+             # Likely a Windows path being read on Linux
+             normalized_wav = raw_wav.replace("\\", "/")
+             # If it has a drive letter like D:/, strip it for relative lookup
+             if ":" in normalized_wav:
+                 normalized_wav = normalized_wav.split(":", 1)[1].lstrip("/")
+             wav_path = Path(normalized_wav)
+        else:
+             wav_path = Path(raw_wav)
+
         if not wav_path.exists():
             # In some multi-platform or docker scenarios, relative paths from manifest may fail
             # Let's try to resolve it relative to manifest location or CWD if absolute fails
-            logging.warning(f"Segment file not found at {wav_path}. Attempting local resolution.")
+            logging.warning(f"Segment file not found at {raw_wav}. Attempting local resolution.")
             # manifest is often in work/out_segs, and segments are there too
-            local_name = wav_path.name
+            local_name = Path(raw_wav.replace("\\", "/")).name
             # common places to look
             candidates = [
                 Path("work/out_segs") / local_name,
                 Path("out_segs") / local_name,
-                Path(".") / local_name
+                Path(".") / local_name,
+                Path(__file__).parent.parent.parent / "work" / "out_segs" / local_name
             ]
             found = False
             for cand in candidates:
                 if cand.exists():
                     wav_path = cand
                     found = True
+                    logging.info(f"Resolved segment to: {wav_path}")
                     break
             
             if not found:
-                logging.error(f"Failed to find segment {entry.get('id', 'unknown')} at {entry['wav']} or common fallbacks.")
+                logging.error(f"Failed to find segment {entry.get('id', 'unknown')} at {raw_wav} or common fallbacks.")
                 continue
 
         try:
