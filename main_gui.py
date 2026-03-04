@@ -14,7 +14,7 @@ from pathlib import Path
 import pysrt
 from nicegui import app, run, ui
 
-from src.config import get_logging_config, patch_tqdm, setup_environment
+from src.config import PROJECT_ROOT, get_logging_config, patch_tqdm, setup_environment
 from src.tts.processor import SRTProcessor
 from src.tts_generator import run_tts_generation
 from src.video_handler import run_video_pipeline
@@ -63,21 +63,16 @@ def format_srt_timestamp(milliseconds: int) -> str:
 
 
 def get_segment_path(segment_id: int) -> Path:
-    return (Path(state.work_dir) / "out_segs" / f"seg_{segment_id:04d}.wav").resolve()
+    return (resolve_work_dir_path(state.work_dir) / "out_segs" / f"seg_{segment_id:04d}.wav").resolve()
 
 
 def get_work_url(target_path: Path) -> str | None:
-    base_dir = (Path.cwd() / "work").resolve()
+    base_dir = (PROJECT_ROOT / "work").resolve()
     try:
         rel_path = target_path.resolve().relative_to(base_dir)
     except ValueError:
         return None
     return f"/work/{rel_path.as_posix()}"
-
-
-def open_url_in_browser(url: str) -> None:
-    safe_url = url.replace("'", "\\'")
-    ui.run_javascript(f"window.open('{safe_url}', '_blank')")
 
 
 def play_audio_url(audio_url: str) -> None:
@@ -145,7 +140,7 @@ def resolve_final_video_path(work_dir: str, output_video: str, input_video: str)
     if output_video.strip():
         return Path(output_video).resolve()
     video_src = Path(input_video)
-    return (Path(work_dir).resolve() / f"{video_src.stem}_dubbed{video_src.suffix}").resolve()
+    return (resolve_work_dir_path(work_dir) / f"{video_src.stem}_dubbed{video_src.suffix}").resolve()
 
 
 @ui.refreshable
@@ -275,7 +270,7 @@ async def start_synthesis(
             "--model_dir", "checkpoints",
             "--ref_voice", str(state.video_data["voice_ref"]),
             "--srt", str(state.srt_path),
-            "--out_dir", str(Path(state.work_dir) / "out_segs"),
+            "--out_dir", str(resolve_work_dir_path(state.work_dir) / "out_segs"),
             "--duration_mode", "seconds",
             "--tokens_per_sec", "150.0",
             "--lang", state.lang,
@@ -357,10 +352,40 @@ async def start_synthesis(
 
 
 def open_output_folder() -> None:
-    try:
-        open_url_in_browser("/outputs")
-    except Exception as exc:
-        ui.notify(f"打开失败: {exc}", type="negative")
+    if not state.final_video_path:
+        ui.notify("暂无输出文件", type="warning")
+        return
+    target = state.final_video_path.parent.resolve()
+    base_dir = (PROJECT_ROOT / "work").resolve()
+    if target != base_dir and base_dir not in target.parents:
+        ui.notify("输出目录不在默认 work 下，无法在浏览器打开", type="warning")
+        return
+
+    with ui.dialog() as dialog, ui.card():
+        ui.label("输出目录文件").classes("text-lg font-medium")
+        ui.label(str(target)).classes("text-xs text-gray-500")
+        ui.separator()
+        has_files = False
+        for file_path in sorted(target.iterdir()):
+            if not file_path.is_file():
+                continue
+            has_files = True
+            file_url = get_work_url(file_path)
+            if file_url:
+                ui.button(
+                    file_path.name,
+                    on_click=lambda _e, url=file_url: ui.run_javascript(
+                        "window.open('" + url.replace("'", "\\'") + "', '_blank')"
+                    ),
+                ).classes("w-full")
+            else:
+                ui.label(file_path.name).classes("text-gray-500")
+
+        if not has_files:
+            ui.label("目录为空").classes("text-gray-500")
+
+        ui.separator()
+        ui.button("关闭", on_click=dialog.close).classes("w-full")
 
 
 def clear_work_dir(target_dir: Path, dialog: ui.dialog) -> None:
@@ -403,7 +428,14 @@ def resolve_work_dir_target(work_dir_input: ui.input | None = None) -> Path:
             state.work_dir = typed_work_dir
 
     state.work_dir = (state.work_dir or "work").strip() or "work"
-    return Path(state.work_dir).resolve()
+    return resolve_work_dir_path(state.work_dir)
+
+
+def resolve_work_dir_path(work_dir: str) -> Path:
+    work_path = Path(work_dir)
+    if not work_path.is_absolute():
+        work_path = PROJECT_ROOT / work_path
+    return work_path.resolve()
 
 
 def confirm_clear_work_dir(work_dir_input: ui.input | None = None) -> None:
@@ -534,34 +566,7 @@ def index_page() -> None:
                 ui.timer(0.4, refresh_runtime_status)
 
 
-app.add_static_files("/work", str((Path.cwd() / "work").resolve()))
-
-
-@ui.page("/outputs")
-def outputs_page() -> None:
-    apply_theme()
-    base_dir = (Path.cwd() / "work").resolve()
-    ui.label("输出文件列表").classes("text-2xl font-bold")
-    ui.label(f"工作目录: {base_dir}").classes("text-sm text-gray-500")
-    ui.separator()
-
-    if not base_dir.exists():
-        ui.label("工作目录不存在或尚未生成文件").classes("text-gray-500")
-        return
-
-    files = [p for p in base_dir.rglob("*") if p.is_file()]
-    if not files:
-        ui.label("暂无输出文件").classes("text-gray-500")
-        return
-
-    files.sort()
-    with ui.column().classes("w-full gap-2"):
-        for item in files:
-            item_url = get_work_url(item)
-            if item_url:
-                ui.link(item.as_posix().replace(base_dir.as_posix() + "/", ""), item_url).props("target=_blank")
-            else:
-                ui.label(item.as_posix())
+app.add_static_files("/work", str((PROJECT_ROOT / "work").resolve()))
 
 
 def parse_runtime_args() -> argparse.Namespace:
