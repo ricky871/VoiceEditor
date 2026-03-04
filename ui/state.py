@@ -45,6 +45,7 @@ class AppState:
     video_data: dict[str, Any] | None = None
     srt_entries: list[dict[str, Any]] = field(default_factory=list)
     srt_path: Path | None = None
+    srt_history: list[list[dict[str, Any]]] = field(default_factory=list)
     final_video_path: Path | None = None
     current_process: Any = None  # Store current subprocess if any
 
@@ -100,4 +101,21 @@ class AppState:
         with self._lock:
             self.logs.clear()
             self.segment_current = 0
+
+    def push_srt_history(self) -> None:
+        """Push a deep copy of current srt_entries to history stack."""
+        import copy
+        with self._lock:
+            # Only keep last 20 steps of history to avoid memory bloat
+            self.srt_history.append(copy.deepcopy(self.srt_entries))
+            if len(self.srt_history) > 20:
+                self.srt_history.pop(0)
+
+    def undo_srt_change(self) -> bool:
+        """Pop the last state from history and restore to srt_entries. Returns True if successful."""
+        with self._lock:
+            if not self.srt_history:
+                return False
+            self.srt_entries = self.srt_history.pop()
+            return True
             self.segment_total = 0

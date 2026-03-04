@@ -167,6 +167,12 @@ def subtitle_editor(filter_str: str = "") -> None:
                     f"{format_srt_timestamp(entry['start_ms'])} → {format_srt_timestamp(entry['end_ms'])}"
                 ).classes("w-64 text-gray-500")
                 text_input = ui.input(value=entry["text"]).classes("flex-1")
+                
+                def on_text_input_focus(item=entry):
+                    # Save history before the user starts typing/editing
+                    state.push_srt_history()
+
+                text_input.on("focus", on_text_input_focus)
                 text_input.on(
                     "change",
                     lambda _event, item=entry, widget=text_input: item.__setitem__("text", widget.value),
@@ -620,6 +626,10 @@ def index_page() -> None:
                         if not f_text:
                             ui.notify("查找内容为空", type="warning")
                             return
+                        
+                        # Save current state for undo
+                        state.push_srt_history()
+                        
                         count = 0
                         for entry in state.srt_entries:
                             if f_text in entry["text"]:
@@ -631,8 +641,16 @@ def index_page() -> None:
                         else:
                             ui.notify("没有找到匹配内容", type="info")
 
+                    def run_undo() -> None:
+                        if state.undo_srt_change():
+                            ui.notify("已撤销上一步操作", type="positive")
+                            subtitle_editor.refresh(find_input.value)
+                        else:
+                            ui.notify("没有可撤销的操作", type="info")
+
                     ui.button(on_click=run_search, icon="search").props("dense flat").tooltip("查找/筛选")
                     ui.button(on_click=run_replace_all, icon="find_replace").props("dense flat").tooltip("全部替换")
+                    ui.button(on_click=run_undo, icon="undo").props("dense flat").tooltip("撤销 (Undo)")
                     ui.button(on_click=clear_search, icon="clear").props("dense flat").tooltip("清除搜索")
 
                 with ui.scroll_area().classes("w-full h-[380px] border rounded p-2"):
