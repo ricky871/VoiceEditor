@@ -40,7 +40,6 @@ outputs/
 *.log
 .env
 .ipynb_checkpoints/
-uv.lock
 
 # Media files (generated)
 *.wav

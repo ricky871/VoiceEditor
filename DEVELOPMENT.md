@@ -1,95 +1,189 @@
 # VoiceEditor 技术架构与开发指南
 
-本文档解析 `VoiceEditor` 的核心逻辑、算法实现及管线流转机制，旨在辅助开发者进行二次开发或优化。
+本文档面向维护者，描述当前代码实现（CLI + GUI）的职责边界、核心数据流、关键算法和改动注意事项。
 
-## 1. 系统架构全景
+## 1) 设计目标
 
-`VoiceEditor` 采用三层架构设计：
-1. **交互逻辑层 ([main.py](main.py))**: 负责 CLI 参数解析、环境自检、SRT 手工干预逻辑及各阶段任务编排。
-2. **核心业务层 ([src/](src/))**: 封装了视频下载、音频能量检测、TTS 片段推理、时长补偿对齐等关键逻辑。
-3. **算法引擎层 ([index-tts/](index-tts/))**: 基于 `IndexTTS2` (MaskGCT 架构) 的 GPT 底层推理后端。
-
----
-
-## 2. 核心模块详解
-
-### A. 智能人声提取 ([src/video_handler.py](src/video_handler.py))
-为了给零样本克隆提供高质量的参考音，程序通过 `VideoEngine` 模块执行：
-*   **能量图扫描**: 计算原视频音频每 0.5s 的 RMS 能量。
-*   **静音过滤**: 跳过开始 60s 后的静音或背景音乐段。
-*   **信噪比优先**: 自动选取连续 10s 且能量波动最稳健的片段作为 `voice_ref.wav`。
-
-### B. 时长补偿对齐算法 ([src/tts_generator.py](src/tts_generator.py))
-这是解决音画不同步的核心。由于生成音频的长度受 `diffusion_steps` 和文本长度影响，必须进行后期处理：
-1. **分段推理**: `TTSSynthesizer` 遍历 SRT 并发/串行生成音频片段。
-2. **时长计算**: 计算实际生成时长 $T_{actual}$ 与字幕帧时长 $T_{target}$ 的比率。
-3. **非线性伸缩**: 
-    *   **偏差 < 5%**: 采用简单的零填充 (Zero Padding) 或截断。
-    *   **偏差 > 5%**: 调用 `pydub.speedup` 或 FFmpeg 的 `atempo` 滤镜进行变速不变调的处理（由 `src/tts/audio_pipeline.py` 实现）。
-
-### C. 资源与环境管理 ([src/resource_manager.py](src/resource_manager.py))
-所有中间产物（临时 WAV、SRT、模型缓存）均由 `ResourceManager` 统一管理。支持：
-*   **原子化写入**: 确保文件完整性后再重命名。
-*   **任务追踪**: 记录 `manifest.json` 以便在失败后能够断点恢复推理。
+- 在本地完成“视频 → 转写 → 配音 → 合流”的闭环流程。
+- 对长耗时任务保持可中断、可恢复。
+- 尽量保证 Windows / Linux 行为一致。
 
 ---
 
-## 3. 工作管线 (Pipeline Flow)
+## 2) 入口与职责
 
-```mermaid
-graph TD
-    A[URL/Path] --> B(VideoEngine: 下载与分离)
-    B --> C(Faster-Whisper: 字幕转写)
-    C --> D{人机交互: 手工修正 SRT}
-    D --> E(TTSSynthesizer: 语音克隆推理)
-    E --> F(AudioPipeline: 变速对齐与拼接)
-    F --> G(FFmpeg: 视频/音轨/字幕合流)
-    G --> H[Final Result]
+### `main.py`（CLI）
+
+- 提供 `setup` / `run` 两个子命令。
+- `setup`：调用 `src/setup_env.py` 同步依赖并下载模型。
+- `run`：执行完整流水线（视频处理 → 手工字幕编辑 → TTS 合成 → 合流）。
+- 支持 URL 快捷模式：当第一个参数以 `http://` / `https://` / `BV` 开头时，自动改写为 `run --url ...`。
+
+### `main_gui.py`（NiceGUI）
+
+- 负责 UI 状态机、日志显示、字幕编辑与任务控制。
+- 视频处理阶段通过 `run.io_bound(...)` 执行，避免阻塞 UI 主线程。
+- 合成阶段通过异步子进程执行 `src/tts_generator.py`，逐行抓取日志并回显。
+- 启动时会自动寻找空闲端口。
+
+---
+
+## 3) 端到端流程
+
+1. 输入视频来源（主要是 URL）。
+2. `src/video_handler.py`
+   - 下载/定位视频
+   - 提取 WAV 音频
+   - faster-whisper 转写 SRT
+   - 选取参考音 `*_voice.wav`
+3. 用户编辑 SRT（CLI 打开外部编辑器 / GUI 内嵌编辑）。
+4. `src/tts_generator.py`
+   - 解析 SRT
+   - 按句推理 TTS
+   - 对齐到目标时长
+   - 写出 `manifest.json`
+5. `src/tts/audio_pipeline.py`
+   - 根据清单拼接整轨音频
+   - 使用 ffmpeg 合流到视频
+
+---
+
+## 4) 模块边界
+
+### `src/video_handler.py`
+
+- `VideoEngine.download_video`：使用 `yt_dlp` 获取视频。
+- `extract_audio`：ffmpeg 转单声道 44.1k WAV。
+- `transcribe`：faster-whisper 生成 SRT，并使用 OpenCC 做繁转简。
+- `extract_voice_ref`：从音频中搜索高能量且不过载片段，导出参考音。
+
+### `src/tts/processor.py`
+
+- `SRTProcessor.parse`：解析字幕为结构化条目。
+- `TTSSynthesizer.synthesize`：逐句合成、缓存复用、失败记录、清单增量保存。
+
+### `src/tts/audio_pipeline.py`
+
+- `retime_segment_to_target`：将句子音频严格贴合字幕时长。
+- `stitch_segments_from_manifest`：按 `start_ms` 叠加分句得到整轨。
+- `mux_audio_video`：ffmpeg 将整轨音频合流到视频。
+
+### `src/resource_manager.py`
+
+- 统一创建工作目录、输出目录和文件路径。
+
+---
+
+## 5) 关键数据结构
+
+### `video_data`（视频处理输出）
+
+```json
+{
+  "video": "...",
+  "audio": "...",
+  "srt": "...",
+  "voice_ref": "...",
+  "duration": 123.45
+}
 ```
 
-## 4. 关键技术点记录
+### `SRTProcessor.parse(...)` 条目结构
 
-*   **FFmpeg Windows 兼容性**: 在烧录字幕滤镜时，由于 Windows 路径包含冒号 (如 `C:\`)，需使用 `replace(":", "\\:")` 逃逸，否则 FFmpeg 会解析失败。详见 [src/audio_merger.py](src/audio_merger.py)。
-*   **多设备支持**: `IndexTTS2` 推理器已集成设备发现逻辑，支持 `cuda`, `mps`, `xpu`, `cpu` 自动降级，并对 `float16` 进行了算子优化。
-
----
-
-## 5. 开发路线图 (Roadmap)
-
-- [ ] **分布式推理**: 支持在大项目中使用多显卡并行处理不同的 SRT 片段。
-- [ ] **OpenVINO 集成**: 针对 Intel NPU/iGPU 加速，已在 `checkpoints/openvino` 预留模型路径。
-- [ ] **GUI 实时预览**: 基于 WebUI 的单句配音试听与精修。
-
----
-*Last Updated: February 2026*
-
----
-
-## 3. 工作管线 (Pipeline Flow)
-
-```mermaid
-graph TD
-    A[URL/Path] --> B(VideoEngine: 下载与分离)
-    B --> C(Faster-Whisper: 字幕转写)
-    C --> D{人机交互: 手工修正 SRT}
-    D --> E(TTSSynthesizer: 语音克隆推理)
-    E --> F(AudioPipeline: 变速对齐与拼接)
-    F --> G(FFmpeg: 视频/音轨/字幕合流)
-    G --> H[Final Result]
+```json
+{
+  "id": 1,
+  "text": "字幕文本",
+  "start_ms": 1000,
+  "end_ms": 2500,
+  "dur_ms": 1500
+}
 ```
 
-## 4. 关键技术点记录
+### `manifest.json` 条目结构（合成后）
 
-*   **FFmpeg Windows 兼容性**: 在烧录字幕滤镜时，由于 Windows 路径包含冒号 (如 `C:\`)，需使用 `replace(":", "\\:")` 逃逸，否则 FFmpeg 会解析失败。详见 [src/audio_merger.py](src/audio_merger.py)。
-*   **多设备支持**: `IndexTTS2` 推理器已集成设备发现逻辑，支持 `cuda`, `mps`, `xpu`, `cpu` 自动降级，并对 `float16` 进行了算子优化。
+```json
+{
+  "id": 1,
+  "text": "字幕文本",
+  "start_ms": 1000,
+  "end_ms": 2500,
+  "wav": ".../seg_0001.wav",
+  "dur_target_ms": 1500,
+  "dur_actual_ms": 1500,
+  "diff_ms": 0,
+  "speed_factor": 1.0
+}
+```
 
 ---
 
-## 5. 开发路线图 (Roadmap)
+## 6) 时长对齐策略（当前实现）
 
-- [ ] **分布式推理**: 支持在大项目中使用多显卡并行处理不同的 SRT 片段。
-- [ ] **OpenVINO 集成**: 针对 Intel NPU/iGPU 加速，已在 `checkpoints/openvino` 预留模型路径。
-- [ ] **GUI 实时预览**: 基于 WebUI 的单句配音试听与精修。
+位于 `src/tts/audio_pipeline.py`：
+
+- 若生成音频比目标短：补静音（不减速，避免“慢放感”）。
+- 若仅轻微超长（约 2% 内或 <50ms）：直接截断。
+- 若明显超长：使用 `librosa.effects.time_stretch` 做加速，再做末端微调。
+- 最终保证每句长度严格对齐目标时间窗。
 
 ---
-*Last Updated: February 2026*
+
+## 7) 可恢复与中断语义
+
+- `manifest.json` 采用临时文件 + 原子替换写入，降低中断损坏风险。
+- 每 5 句（以及最后一次）会执行增量保存。
+- 若历史片段存在且文本一致，会复用缓存跳过推理。
+- CLI 支持 `KeyboardInterrupt` 退出；GUI 支持停止按钮终止当前任务。
+
+---
+
+## 8) 跨平台与安全注意事项
+
+- ffmpeg 相关路径必须考虑 Windows 兼容（尤其字幕滤镜场景中的冒号转义）。
+- GUI 文件浏览器通过路径归属检查，阻止访问工作目录之外的文件。
+- 清空工作目录前会进行根目录与边界防护，避免误删项目根路径。
+
+---
+
+## 9) 开发约束（本仓库约定）
+
+- 使用 `pathlib.Path` 处理路径。
+- 使用 `logging` 输出运行信息，避免新增无必要 `print`。
+- 改动最小化，优先修根因，不做无关重构。
+- 优先走现有参数链路（CLI 参数 / AppState / 函数入参）。
+- 默认不改 `index-tts/` 与 `checkpoints/`。
+
+---
+
+## 10) 最小验证清单
+
+```bash
+uv run .\main.py --help
+uv run .\main.py run --help
+uv run .\main_gui.py --help
+```
+
+SRT 解析快速验证：
+
+```bash
+D:/Coding/Python/VoiceEditor/.venv/Scripts/python.exe -c "from pathlib import Path; from src.tts.processor import SRTProcessor; p=Path('work/144_p02_1.srt'); print('exists', p.exists()); print('count', len(SRTProcessor.parse(p)))"
+```
+
+若改动影响合成流程，至少验证：
+
+- `work/out_segs/manifest.json` 可生成。
+- 分段音频数量与字幕条目数量一致（允许个别失败但需有日志）。
+- 合流路径可产出最终视频或可解释的错误日志。
+
+---
+
+## 11) 已知限制（截至当前实现）
+
+- `main.py` 的快捷模式只识别 URL/BV 前缀，不适用于任意本地路径。
+- `run` 子命令中的 `--stitch` 当前为兼容参数，实际流程默认执行合并。
+- `run` 子命令中的 `--cn` 目前未直接影响主流程行为（主要在 setup 阶段有意义）。
+
+---
+
+*Last Updated: 2026-03-04*

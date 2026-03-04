@@ -1,119 +1,160 @@
 # VoiceEditor (powered by IndexTTS2)
 
-`VoiceEditor` 是一个全自动、交互式的视频配音与语音重构工具。它集成了视频下载、语音转写、零样本 (Zero-Shot) 语音克隆及音画自动同步算法，旨在为视频创作者提供一键式的本地化配音方案。
+VoiceEditor 是一个基于 IndexTTS2 的视频配音与语音重构工具，提供 CLI 与 NiceGUI 两种使用方式，覆盖：视频获取、语音转写、参考音提取、分句合成、音视频合流。
 
----
+## ✨ 核心能力
 
-## ✨ 核心特性
+- 自动化流程：从视频到最终配音视频的一站式流水线。
+- 字幕可编辑：转写后可手工修正字幕，再进入合成。
+- 时长强对齐：按字幕时间窗对每句音频进行对齐，降低口型错位。
+- 可恢复执行：合成阶段会持续写出 `manifest.json`，便于失败后继续。
+- 跨平台运行：主要支持 Windows / Linux。
 
-- **🚀 极简工作流**：支持视频 URL（Bilibili/YouTube）或本地文件，一行命令完成全流程。
-- **🎙️ 零样本语音克隆**：基于 **IndexTTS2** 引擎，仅需 10 秒参考音频即可精准复刻原片音色。
-- **📝 交互式校对**：自动生成字幕并智能弹出编辑器，允许人工修正文字/时间轴后继续合成。
-- **⏳ 智能对齐**：采用 `Time Stretching` (时延补偿) 算法与 FFmpeg 变速不变调滤镜，确保音画严丝合缝。
-- **⚡ 硬件加速**：原生支持 CUDA, MPS (Mac), XPU (Intel) 及 CPU 推理；内置 OpenVINO 模型适配（开发中）。
-- **🌐 一键环境搭建**：基于 `uv` 构建，自动补齐 Python 环境及 5GB+ 模型权重，国内镜像全加速。
+## 🧱 环境要求
 
----
+- Python：`>=3.11, <3.12`
+- 包管理：`uv`
+- 系统依赖：`ffmpeg`（必须在 PATH 中）
+- 运行设备：CPU 可运行，CUDA 可显著加速
 
-## 🛠️ 环境准备
+## 🚀 快速开始
 
-在开始之前，请确保您的系统中已安装以下前置软件：
+### 1) 初始化依赖与模型
 
-### 1. 安装 FFmpeg (核心音视频处理)
-- **Windows**: 推荐使用 [Scoop](https://scoop.sh/) 安装：`scoop install ffmpeg`。或从 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 下载解压，并将 `bin` 目录手动添加到系统环境变量 `PATH`。
-- **Linux**: 使用包管理器安装，例如 Ubuntu/Debian: `sudo apt update && sudo apt install ffmpeg`。
-
-### 2. 安装 uv (包与环境管理)
-本项目强制使用 [uv](https://github.com/astral-sh/uv) 进行管理，不再建议手动配置虚拟环境。
-- **Windows**: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
-- **Linux/macOS**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-
-### 3. 初始化环境与权重
-针对中国大陆用户，默认已启用 ModelScope 和 TUNA 镜像：
 ```bash
-uv run main.py setup
-```
-*该步将安装 Python 3.11 并自动下载所有必需的模型 Checkpoints。*
-
----
-
-## 🚦 快速开始
-
-### 方式 A: Web GUI (推荐)
-提供更加直观的交互界面，支持实时查看日志和进度。
-```bash
-# 启动 Web 服务 (默认端口 8196)
-uv run main_gui.py
-
-# 指定端口与 IP (支持远程访问)
-uv run main_gui.py --port 8196 --host 0.0.0.0
+uv run .\main.py setup
 ```
 
-### 方式 B: 命令行 (CLI)
-直接输入视频链接（支持 Bilibili、YouTube 或本地路径）：
+> 首次执行会同步依赖并下载较大模型文件，请预留时间与磁盘空间。
+
+### 2) 启动 Web GUI（推荐）
+
 ```bash
-# 极简模式 (默认启用 stitch 合成)
-uv run main.py "https://www.bilibili.com/video/BV1qctczUEfn"
+uv run .\main_gui.py --host 0.0.0.0 --port 8196
 ```
 
----
+- 程序会在启动时自动检测端口，若端口被占用，会自动尝试后续可用端口。
+- 浏览器打开后按页面步骤执行：
+  1. 开始处理（下载/转写/提取参考音）
+  2. 编辑字幕
+  3. 开始合成
 
-## 🐧 Linux 部署与自动运行
+### 3) CLI 使用
 
-本项目为 Linux 环境提供了完整的一键安装与 Systemd 服务脚本：
+#### 3.1 URL 快捷模式
 
-### 1. 一键安装
+```bash
+uv run .\main.py "https://www.bilibili.com/video/BVxxxx"
+```
+
+> 快捷模式仅在首参数以 `http://`、`https://` 或 `BV` 开头时触发。
+
+#### 3.2 标准模式（推荐）
+
+```bash
+uv run .\main.py run --url "https://www.youtube.com/watch?v=xxxx" --work-dir work
+```
+
+也支持位置参数形式：
+
+```bash
+uv run .\main.py run "https://www.youtube.com/watch?v=xxxx"
+```
+
+显示详细日志：
+
+```bash
+uv run .\main.py --verbose run --url "https://www.youtube.com/watch?v=xxxx"
+```
+
+## ⚙️ `main.py run` 参数
+
+| 参数 | 说明 | 默认值 |
+| :--- | :--- | :--- |
+| `--url` / `pos_url` | 视频来源（URL 或可被 yt-dlp 解析的输入） | 必填其一 |
+| `--work-dir` | 工作目录 | `work` |
+| `--output` | 最终视频输出路径 | 空（自动生成） |
+| `--whisper-model` | Whisper 模型大小 | `small` |
+| `--lang` | 语言参数（转写/合成链路） | `zh` |
+| `--emo-text` | 情绪提示词 | `""` |
+| `--diffusion-steps` | TTS diffusion 步数 | `25` |
+| `--stitch` | 启用最终音频拼接与合流 | 当前实现默认开启 |
+| `--cn` | 中国镜像相关参数（保留） | `True` |
+
+### 输出路径规则
+
+- 未传 `--output` 时，默认输出为：`<work-dir>/<输入视频名>_dubbed.<原后缀>`。
+- 合成中间产物在 `work/out_segs/`。
+
+## 📁 主要产物
+
+- `work/*.srt`：转写字幕（可编辑）
+- `work/*_voice.wav`：提取的参考音
+- `work/out_segs/seg_0001.wav ...`：分句合成音频
+- `work/out_segs/manifest.json`：分句清单（用于恢复和统计）
+- `work/merged_audio.wav`：合并后的整轨音频
+- `work/*_dubbed.mp4`（或 `--output` 指定路径）：最终视频
+
+## ♻️ 可恢复与缓存行为
+
+- 若已有字幕或参考音，流程会优先复用缓存。
+- 合成时若发现已有片段且文本一致，会跳过重复推理。
+- `manifest.json` 采用增量写入（每 5 句及结束时保存一次）。
+- 中断后可重新运行，已完成片段通常可继续复用。
+
+## 🐧 Linux 部署（可选）
+
+### 一键安装
+
 ```bash
 chmod +x install.sh
 ./install.sh
 ```
 
-### 2. 开机自动启动 (Systemd)
-如果您希望在服务器上长期运行 Web GUI 并随系统启动：
+### 配置 systemd 服务
+
 ```bash
 chmod +x deploy_service.sh
 sudo ./deploy_service.sh
 ```
-部署成功后，可通过 `http://<服务器IP>:8196` 访问。
 
-- **查看服务状态**: `sudo systemctl status voiceeditor`
-- **查看实时日志**: `journalctl -u voiceeditor -f`
+查看状态与日志：
 
----
+```bash
+sudo systemctl status voiceeditor
+journalctl -u voiceeditor -f
+```
 
-## 📖 命令行参数详解
+## 🛠️ 常见问题
 
-### `main.py run` (主任务)
-| 参数 | 简写 | 说明 | 默认值 |
-| :--- | :--- | :--- | :--- |
-| `url` | (位置参数) | 视频链接 (Youtube/Bili) 或本地文件路径 | **(必选)** |
-| `--output` | `-o` | 最终合成视频的输出路径 | `work/output.mp4` |
-| `--work-dir` | - | 中间产物目录 | `work` |
-| `--stitch` | - | 是否将生成的音频合回视频 | `True` |
-| `--lang` | - | 目标语言代码 (如 `zh`, `en`) | `zh` |
-| `--diffusion-steps`| - | TTS 采样步数 (越高质越好，越慢) | `25` |
-| `--whisper-model` | - | 转写模型 (`base`, `small`, `medium`, `large-v3`) | `small` |
-| `--emo-text` | - | 情感引导词，例如 `[happy]` 或 `[fast-paced]` | `""` |
-| `--verbose` | `-v` | 显示详细推理进度与日志 | `False` |
+### 1) `ffmpeg` 不存在
 
----
+- 现象：抽取音频或合流失败。
+- 处理：安装 ffmpeg 并确保 `ffmpeg -version` 可执行。
 
-## 📁 项目结构
+### 2) GUI 启动失败或立即退出
 
-- [main.py](main.py): 统一入口，支持 `setup` 和 `run` 子命令。
-- [src/](src/): 核心逻辑（资源管理、视频流水线、TTS 推理、FFmpeg 合流）。
-- [index-tts/](index-tts/): 算法后端 (Submodule)。
-- [checkpoints/](checkpoints/): 模型权重与 OpenVINO XML 定义。
-- [work/](work/): 临时产物目录，存放生成的音频片段与中间 SRT。
+- 先检查参数是否正常：
 
----
+```bash
+uv run .\main_gui.py --help
+```
 
-## 🤝 开发者参考
+- 再检查依赖是否完整：
 
-若需了解对齐算法实现或其他技术细节，请参阅 [DEVELOPMENT.md](DEVELOPMENT.md)。
+```bash
+uv sync
+```
 
-*Powered by IndexTTS2, OpenAI Whisper & uv*
+### 3) 首次运行很慢
 
+- 首次会下载/初始化模型，属于预期行为。
 
+### 4) 合成失败但已有部分输出
 
+- 检查 `work/out_segs/manifest.json` 与分段文件是否存在。
+- 重新执行通常可复用已完成片段。
 
+## 🤝 开发文档
+
+详细架构、数据结构和模块职责请见 [DEVELOPMENT.md](DEVELOPMENT.md)。
