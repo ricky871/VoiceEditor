@@ -1,0 +1,30 @@
+[Unit]
+Description=VoiceEditor Web GUI (IndexTTS & Dubbing Service)
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{USER}}
+Group={{USER}}
+WorkingDirectory={{INSTALL_DIR}}
+
+# Environment variables for NiceGUI access from network
+Environment="UV_PYTHON=python3"
+Environment="NICEGUI_HOST=0.0.0.0"
+Environment="NICEGUI_PORT=8196"
+
+# UV will automatically handle the virtual environment sync if needed
+ExecStart={{HOME}}/.cargo/bin/uv run main_gui.py
+
+# Restart configuration for long-running stability
+Restart=always
+RestartSec=5
+
+# Resources
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=voiceeditor
+
+[Install]
+WantedBy=multi-user.target
