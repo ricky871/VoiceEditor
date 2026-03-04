@@ -102,6 +102,42 @@ class AppState:
         with self._lock:
             self.logs.clear()
             self.segment_current = 0
+            self.segment_total = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert current application state to a serializable dictionary."""
+        with self._lock:
+            return {
+                "url_or_path": self.url_or_path,
+                "work_dir": self.work_dir,
+                "whisper_model": self.whisper_model,
+                "lang": self.lang,
+                "emo_text": self.emo_text,
+                "diffusion_steps": self.diffusion_steps,
+                "burn_subs": self.burn_subs,
+                "force_regen": self.force_regen,
+                "video_data": self.video_data,
+                "srt_path": str(self.srt_path) if self.srt_path else None,
+            }
+
+    def from_dict(self, data: dict[str, Any]) -> None:
+        """Update state from a dictionary."""
+        with self._lock:
+            self.url_or_path = data.get("url_or_path", "")
+            self.work_dir = data.get("work_dir", "work")
+            self.whisper_model = data.get("whisper_model", "small")
+            self.lang = data.get("lang", "zh")
+            self.emo_text = data.get("emo_text", "")
+            self.diffusion_steps = data.get("diffusion_steps", 25)
+            self.burn_subs = data.get("burn_subs", False)
+            self.force_regen = data.get("force_regen", False)
+            self.video_data = data.get("video_data")
+            srt_path_str = data.get("srt_path")
+            self.srt_path = Path(srt_path_str) if srt_path_str else None
+            # If we restored a valid SRT path, we are at step 2
+            if self.srt_path and self.srt_path.exists():
+                self.step = 2
+                self.progress = 0.6
 
     def push_srt_history(self) -> None:
         """Push a deep copy of current srt_entries to history stack."""

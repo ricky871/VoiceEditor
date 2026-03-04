@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
+import platform
 import shutil
 import socket
 import sys
@@ -239,6 +241,16 @@ async def start_processing(
         state.srt_entries = SRTProcessor.parse(state.srt_path)
         state.step = 2
         state.progress = 0.6
+        
+        # Save state to disk for future session recovery
+        try:
+            state_file = Path(state.work_dir) / "state.json"
+            with open(state_file, "w", encoding="utf-8") as f:
+                json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
+            logging.info(f"Session state saved to {state_file}")
+        except Exception as e:
+            logging.error(f"Failed to save session state: {e}")
+
         subtitle_editor.refresh()
         ui.notify(f"转写完成，共 {len(state.srt_entries)} 条字幕", type="positive")
     except Exception as exc:
@@ -286,6 +298,14 @@ async def start_synthesis(
     try:
         save_entries_to_srt(state.srt_entries, state.srt_path)
         
+        # Also update session state if any synthesis-specific settings changed
+        try:
+            state_file = Path(state.work_dir) / "state.json"
+            with open(state_file, "w", encoding="utf-8") as f:
+                json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
         # Build command for subprocess
         cmd = [
             sys.executable,
@@ -560,33 +580,48 @@ def work_files(path: str) -> Response:
 @ui.page("/")
 def index_page() -> None:
     apply_theme()
+    
+    # Try to auto-load last session from the default "work" folder
+    state_file = Path(state.work_dir) / "state.json"
+    if state_file.exists():
+        try:
+            with open(state_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                state.from_dict(data)
+                # If we restored an SRT path, parse it to fill srt_entries
+                if state.srt_path and state.srt_path.exists():
+                    state.srt_entries = SRTProcessor.parse(state.srt_path)
+            logging.info(f"Loaded previous session from {state_file}")
+        except Exception as e:
+            logging.error(f"Failed to auto-load session: {e}")
+
     with ui.column().classes("app-shell w-full gap-4 p-4"):
         ui.label("VoiceEditor NiceGUI").classes("text-2xl font-bold")
 
         with ui.row().classes("w-full gap-4 items-start"):
             with ui.card().classes("w-[420px] gap-3"):
                 ui.label("输入与参数").classes("text-lg font-medium")
-                url_input = ui.input("视频 URL 或本地文件路径").classes("w-full")
-                work_dir_input = ui.input("工作目录", value="work").classes("w-full")
+                url_input = ui.input("视频 URL 或本地文件路径", value=state.url_or_path or "").bind_value(state, "url_or_path").classes("w-full")
+                work_dir_input = ui.input("工作目录", value=str(state.work_dir) or "work").bind_value(state, "work_dir").classes("w-full")
                 whisper_model_select = ui.select(
                     ["tiny", "base", "small", "medium", "large-v3"],
-                    value="small",
+                    value=state.whisper_model,
                     label="Whisper 模型",
-                ).classes("w-full")
-                lang_select = ui.select(["zh", "en", "ja", "auto"], value="zh", label="输出语言").classes("w-full")
-                emo_text_input = ui.input("情绪提示（可选，如：whispering）").classes("w-full")
-                diffusion_steps_input = ui.number(label="迭代步数 (Diffusion Steps)", value=25, min=5, max=80, step=1).classes("w-full")
+                ).bind_value(state, "whisper_model").classes("w-full")
+                lang_select = ui.select(["zh", "en", "ja", "auto"], value=state.lang, label="输出语言").bind_value(state, "lang").classes("w-full")
+                emo_text_input = ui.input("情绪提示（可选，如：whispering）", value=state.emo_text).bind_value(state, "emo_text").classes("w-full")
+                diffusion_steps_input = ui.number(label="迭代步数 (Diffusion Steps)", value=state.diffusion_steps, min=5, max=80, step=1).bind_value(state, "diffusion_steps").classes("w-full")
                 with ui.row().classes("w-full gap-2"):
-                    burn_subs_checkbox = ui.checkbox("烧录字幕").classes("flex-1")
-                    force_regen_checkbox = ui.checkbox("全量合成").classes("flex-1")
+                    burn_subs_checkbox = ui.checkbox("烧录字幕", value=state.burn_subs).bind_value(state, "burn_subs").classes("flex-1")
+                    force_regen_checkbox = ui.checkbox("全量合成", value=state.force_regen).bind_value(state, "force_regen").classes("flex-1")
                     burn_subs_checkbox.tooltip("将修改后的字幕添加到输出视频上方")
                     force_regen_checkbox.tooltip("忽略缓存并重新生成所有音频片段")
-                output_video_input = ui.input("输出视频路径（可选，默认为工作目录下）").classes("w-full")
+                output_video_input = ui.input("输出视频路径（可选，默认为工作目录下）", value=str(state.output_video or "")).bind_value(state, "output_video").classes("w-full")
 
                 progress_bar = ui.linear_progress(value=0, show_value=False).classes("w-full")
                 progress_label = ui.label("进度: 0%").classes("text-sm text-gray-600")
                 status_label = ui.label("等待开始")
-                output_label = ui.label("输出视频: -").classes("text-gray-600")
+                output_label = ui.label(f"输出视频: {state.output_video or '-'}")
 
                 with ui.row().classes("w-full gap-2"):
                     ui.button(
