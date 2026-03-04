@@ -13,9 +13,10 @@ WorkingDirectory={{INSTALL_DIR}}
 Environment="UV_PYTHON=python3"
 Environment="NICEGUI_HOST=0.0.0.0"
 Environment="NICEGUI_PORT=8196"
+Environment="PATH={{HOME}}/.local/bin:{{HOME}}/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
 
 # UV will automatically handle the virtual environment sync if needed
-ExecStart={{HOME}}/.cargo/bin/uv run main_gui.py
+ExecStart=uv run main_gui.py
 
 # Restart configuration for long-running stability
 Restart=always
