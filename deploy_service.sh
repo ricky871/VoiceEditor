@@ -7,6 +7,23 @@ SERVICE_FILE="${SERVICE_NAME}.service"
 USER_NAME=$(whoami)
 HOME_PATH=$HOME
 
+# Find the absolute path of 'uv'
+# If running with sudo, 'which' might search root's PATH, so we also check common user paths
+USER_UV_PATH=$(sudo -u $USER_NAME which uv 2>/dev/null)
+if [ -n "$USER_UV_PATH" ]; then
+    UV_PATH="$USER_UV_PATH"
+elif [ -f "$HOME/.cargo/bin/uv" ]; then
+    UV_PATH="$HOME/.cargo/bin/uv"
+elif [ -f "$HOME/.local/bin/uv" ]; then
+    UV_PATH="$HOME/.local/bin/uv"
+elif command -v uv >/dev/null 2>&1; then
+    UV_PATH=$(command -v uv)
+else
+    echo "Error: 'uv' executable not found. Please ensure 'uv' is installed and in your PATH."
+    exit 1
+fi
+echo "Using 'uv' at: $UV_PATH"
+
 # --- Handle uninstallation ---
 if [ "$1" == "uninstall" ]; then
     echo "Uninstalling VoiceEditor systemd service..."
@@ -27,6 +44,7 @@ echo "Configuring the systemd service for Linux deployment..."
 sed -e "s|{{USER}}|$USER_NAME|g" \
     -e "s|{{INSTALL_DIR}}|$INSTALL_DIR|g" \
     -e "s|{{HOME}}|$HOME_PATH|g" \
+    -e "s|{{UV_PATH}}|$UV_PATH|g" \
     voiceeditor.service.template > $SERVICE_FILE
 
 echo "Created service file: $SERVICE_FILE"
