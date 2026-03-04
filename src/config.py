@@ -22,6 +22,21 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 def patch_tqdm(disable=True):
     """Globally disable or enable tqdm progress bars."""
+    # ... previous code ...
+
+def get_device() -> str:
+    """Detect available compute device (CUDA, MPS, XPU, or CPU)."""
+    import torch
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        return "xpu"
+    return "cpu"
+
+def patch_tqdm(disable=True):
+    """Globally disable or enable tqdm progress bars."""
     try:
         from tqdm import tqdm as real_tqdm
         from functools import partial

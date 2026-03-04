@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 import pysrt
 from nicegui import app, run, ui
 
-from src.config import get_logging_config, patch_tqdm, setup_environment
+from src.config import get_device, get_logging_config, patch_tqdm, setup_environment
 from src.tts.processor import SRTProcessor
 from src.tts_generator import run_tts_generation
 from src.video_handler import run_video_pipeline
@@ -463,7 +463,11 @@ def compute_status_text() -> str:
 
     if state.synthesizing:
         if state.segment_total > 0:
-            return f"合成中：第 {state.segment_current}/{state.segment_total} 句（CPU 模式会较慢）"
+            status = f"合成中：第 {state.segment_current}/{state.segment_total} 句"
+            # Only show warning if running on CPU
+            if get_device() == "cpu":
+                status += " (CPU 模式会较慢)"
+            return status
         return "合成中：正在生成语音并混流..."
 
     if state.step == 2 and state.srt_entries:
