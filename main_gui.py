@@ -451,7 +451,7 @@ app.add_static_files("/work", str((Path.cwd() / "work").resolve()))
 def parse_runtime_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="VoiceEditor NiceGUI")
     parser.add_argument("--host", default=os.environ.get("VOICEEDITOR_GUI_HOST", "0.0.0.0"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("VOICEEDITOR_GUI_PORT", "8080")))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("VOICEEDITOR_GUI_PORT", "8196")))
     return parser.parse_args()
 
 

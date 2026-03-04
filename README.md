@@ -42,7 +42,7 @@ uv run main.py setup
 ### 方式 A: Web GUI (推荐)
 提供更加直观的交互界面，支持实时查看日志和进度。
 ```bash
-# 启动 Web 服务 (默认端口 8080)
+# 启动 Web 服务 (默认端口 8196)
 uv run main_gui.py
 
 # 指定端口与 IP (支持远程访问)
@@ -74,7 +74,7 @@ chmod +x install.sh
 chmod +x deploy_service.sh
 sudo ./deploy_service.sh
 ```
-部署成功后，可通过 `http://<服务器IP>:8080` 访问。
+部署成功后，可通过 `http://<服务器IP>:8196` 访问。
 
 - **查看服务状态**: `sudo systemctl status voiceeditor`
 - **查看实时日志**: `journalctl -u voiceeditor -f`
