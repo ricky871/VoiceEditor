@@ -4,8 +4,10 @@ import argparse
 import asyncio
 import logging
 import os
+import platform
 import shutil
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -48,13 +50,22 @@ def get_segment_path(segment_id: int) -> Path:
     return (Path(state.work_dir) / "out_segs" / f"seg_{segment_id:04d}.wav").resolve()
 
 
+def open_path(target: Path) -> None:
+    if platform.system() == "Windows":
+        os.startfile(str(target))
+    elif platform.system() == "Darwin":
+        subprocess.run(["open", str(target)], check=False)
+    else:
+        subprocess.run(["xdg-open", str(target)], check=False)
+
+
 def preview_segment(segment_id: int) -> None:
     seg_path = get_segment_path(segment_id)
     if not seg_path.exists():
         ui.notify(f"该句音频尚未生成: {seg_path.name}", type="warning")
         return
     try:
-        os.startfile(str(seg_path))
+        open_path(seg_path)
     except Exception as exc:
         ui.notify(f"试听失败: {exc}", type="negative")
 
@@ -305,7 +316,7 @@ def open_output_folder() -> None:
         return
     target = state.final_video_path.parent
     try:
-        os.startfile(str(target))
+        open_path(target)
     except Exception as exc:
         ui.notify(f"打开失败: {exc}", type="negative")
 
