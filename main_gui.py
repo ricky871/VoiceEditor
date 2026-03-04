@@ -147,13 +147,20 @@ def resolve_final_video_path(work_dir: str, output_video: str, input_video: str)
 
 
 @ui.refreshable
-def subtitle_editor() -> None:
+def subtitle_editor(filter_str: str = "") -> None:
     if not state.srt_entries:
         ui.label("等待转写结果...").classes("text-gray-500")
         return
+        
+    entries_to_show = state.srt_entries
+    if filter_str:
+        entries_to_show = [e for e in state.srt_entries if filter_str in e["text"]]
+        if not entries_to_show:
+            ui.label(f"未找到包含 '{filter_str}' 的字幕").classes("text-gray-500")
+            return
 
     with ui.column().classes("w-full gap-2"):
-        for entry in state.srt_entries:
+        for entry in entries_to_show:
             with ui.row().classes("w-full items-center gap-2"):
                 ui.label(f"#{entry['id']}").classes("w-12 text-gray-500")
                 ui.label(
@@ -588,6 +595,39 @@ def index_page() -> None:
 
             with ui.card().classes("flex-1 gap-3"):
                 ui.label("字幕编辑").classes("text-lg font-medium")
+
+                with ui.row().classes("w-full gap-2 items-center"):
+                    find_input = ui.input("查找内容").classes("flex-1").props("dense outlined")
+                    replace_input = ui.input("替换为").classes("flex-1").props("dense outlined")
+
+                    def run_search() -> None:
+                        subtitle_editor.refresh(find_input.value)
+
+                    def clear_search() -> None:
+                        find_input.value = ""
+                        subtitle_editor.refresh("")
+
+                    def run_replace_all() -> None:
+                        f_text = find_input.value
+                        r_text = replace_input.value
+                        if not f_text:
+                            ui.notify("查找内容为空", type="warning")
+                            return
+                        count = 0
+                        for entry in state.srt_entries:
+                            if f_text in entry["text"]:
+                                entry["text"] = entry["text"].replace(f_text, r_text)
+                                count += 1
+                        if count > 0:
+                            ui.notify(f"已替换 {count} 处文本", type="positive")
+                            subtitle_editor.refresh(f_text if f_text else "")  # Refresh view
+                        else:
+                            ui.notify("没有找到匹配内容", type="info")
+
+                    ui.button(on_click=run_search, icon="search").props("dense flat").tooltip("查找/筛选")
+                    ui.button(on_click=run_replace_all, icon="find_replace").props("dense flat").tooltip("全部替换")
+                    ui.button(on_click=clear_search, icon="clear").props("dense flat").tooltip("清除搜索")
+
                 with ui.scroll_area().classes("w-full h-[380px] border rounded p-2"):
                     subtitle_editor()
 
