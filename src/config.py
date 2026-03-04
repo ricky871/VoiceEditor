@@ -132,6 +132,7 @@ class Config:
         video: str = "",
         output_video: str = "",
         verbose: bool = False,
+        force_regen: bool = False,
     ):
         self.cfg_path = Path(cfg_path)
         self.model_dir = Path(model_dir)
@@ -152,6 +153,7 @@ class Config:
         self.video = Path(video) if video else None
         self.output_video = Path(output_video) if output_video else None
         self.verbose = verbose
+        self.force_regen = force_regen
         self.default_model_dir = CHECKPOINTS_DIR
 
     @classmethod
@@ -177,6 +179,7 @@ class Config:
             video=args.video,
             output_video=args.output_video,
             verbose=args.verbose,
+            force_regen=getattr(args, "force_regen", False),
         )
 
     def resolve_paths(self):
