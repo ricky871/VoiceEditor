@@ -39,21 +39,45 @@ uv run main.py setup
 
 ## 🚦 快速开始
 
-### 执行全流程配音
+### 方式 A: Web GUI (推荐)
+提供更加直观的交互界面，支持实时查看日志和进度。
+```bash
+# 启动 Web 服务 (默认端口 8080)
+uv run main_gui.py
+
+# 指定端口与 IP (支持远程访问)
+uv run main_gui.py --port 8196 --host 0.0.0.0
+```
+
+### 方式 B: 命令行 (CLI)
 直接输入视频链接（支持 Bilibili、YouTube 或本地路径）：
 ```bash
 # 极简模式 (默认启用 stitch 合成)
 uv run main.py "https://www.bilibili.com/video/BV1qctczUEfn"
-
-# 完整模式 (指定输出路径与扩散步数)
-uv run main.py run --url "YOUR_URL" --output "result.mp4" --diffusion-steps 30
 ```
 
-**运行中的关键交互：**
-1. **自动提取**：程序从原片智能选取信噪比最高的人声音段作为参考。
-2. **人工干预**：自动唤起系统编辑器打开转换后的 SRT 字幕。
-3. **编辑修正**：在编辑器中修正错别字或调整断句，**保存并关闭**编辑器。
-4. **合成封装**：返回终端按 `ENTER`，程序将按修正后的内容进行克隆并合成最终视频。
+---
+
+## 🐧 Linux 部署与自动运行
+
+本项目为 Linux 环境提供了完整的一键安装与 Systemd 服务脚本：
+
+### 1. 一键安装
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+### 2. 开机自动启动 (Systemd)
+如果您希望在服务器上长期运行 Web GUI 并随系统启动：
+```bash
+chmod +x deploy_service.sh
+sudo ./deploy_service.sh
+```
+部署成功后，可通过 `http://<服务器IP>:8080` 访问。
+
+- **查看服务状态**: `sudo systemctl status voiceeditor`
+- **查看实时日志**: `journalctl -u voiceeditor -f`
 
 ---
 
