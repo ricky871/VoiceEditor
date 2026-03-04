@@ -26,6 +26,8 @@ state = AppState()
 setup_environment()
 patch_tqdm(True)
 
+AUDIO_PLAYER_ID = "segment-player"
+
 root_logger = logging.getLogger()
 if not root_logger.handlers:
     logging.basicConfig(**get_logging_config(verbose=False))
@@ -50,6 +52,27 @@ def get_segment_path(segment_id: int) -> Path:
     return (Path(state.work_dir) / "out_segs" / f"seg_{segment_id:04d}.wav").resolve()
 
 
+def get_work_url(target_path: Path) -> str | None:
+    base_dir = (Path.cwd() / "work").resolve()
+    try:
+        rel_path = target_path.resolve().relative_to(base_dir)
+    except ValueError:
+        return None
+    return f"/work/{rel_path.as_posix()}"
+
+
+def play_audio_url(audio_url: str) -> None:
+    safe_url = audio_url.replace("'", "\\'")
+    ui.run_javascript(
+        "const player = document.getElementById('" + AUDIO_PLAYER_ID + "');"
+        "if (player) {"
+        "  player.src = '" + safe_url + "';"
+        "  player.load();"
+        "  player.play();"
+        "}"
+    )
+
+
 def open_path(target: Path) -> None:
     if platform.system() == "Windows":
         os.startfile(str(target))
@@ -65,7 +88,11 @@ def preview_segment(segment_id: int) -> None:
         ui.notify(f"该句音频尚未生成: {seg_path.name}", type="warning")
         return
     try:
-        open_path(seg_path)
+        audio_url = get_work_url(seg_path)
+        if not audio_url:
+            ui.notify("工作目录不在默认 work 下，无法在浏览器播放", type="warning")
+            return
+        play_audio_url(audio_url)
     except Exception as exc:
         ui.notify(f"试听失败: {exc}", type="negative")
 
@@ -468,6 +495,9 @@ def index_page() -> None:
                 ui.label("字幕编辑").classes("text-lg font-medium")
                 with ui.scroll_area().classes("w-full h-[380px] border rounded p-2"):
                     subtitle_editor()
+
+                ui.label("试听播放器").classes("text-sm text-gray-500")
+                ui.element("audio").props(f"id={AUDIO_PLAYER_ID} controls preload=none").classes("w-full")
 
                 ui.separator()
                 ui.label("运行日志").classes("text-lg font-medium")
