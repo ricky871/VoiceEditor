@@ -1,6 +1,7 @@
 import json
 import math
 import logging
+import hashlib
 from pathlib import Path
 from glob import glob
 from typing import Dict, List, Optional, Any
@@ -89,16 +90,7 @@ class TTSSynthesizer:
         if last_exc: raise last_exc
 
     def synthesize(self, entries: List[Dict]) -> tuple[List[Dict], int]:
-        """Synthesize audio segments for all entries or a specific one."""
-        # 0. Handle single segment synthesis if specified in config
-        single_id = getattr(self.config, "single_segment", None)
-        if single_id is not None:
-             try:
-                 single_id = int(single_id)
-                 logging.info(f">> Targeting single segment ID: {single_id}")
-             except (ValueError, TypeError):
-                 single_id = None
-
+        """Synthesize audio segments for all entries."""
         # 1. Explicitly check ref_voice existence with detailed error
         if not self.config.ref_voice or not self.config.ref_voice.exists():
              logging.error(f"CRITICAL: Reference voice file missing at: {self.config.ref_voice}")
@@ -125,26 +117,45 @@ class TTSSynthesizer:
         failed = []
         canceled = False
         cancel_event = getattr(self.config, "cancel_event", None)
+        force_regen = getattr(self.config, "force_regen", False)
+        
         pbar = tqdm(entries, desc="正在生成语音", unit="句", disable=not self.config.verbose)
         for seq, entry in enumerate(pbar, start=1):
-            # Skip if focusing on a single segment
-            if single_id is not None and entry.get("id") != single_id:
-                # If we have existing manifest entry, keep it, otherwise manifest will be partial
-                if seq in existing:
-                    manifest.append(existing[seq])
-                continue
-
             if cancel_event is not None and cancel_event.is_set():
                 logging.warning(">> 合成已取消，正在停止（已完成片段将保留）")
                 canceled = True
                 break
+            
+            # 1. Calculate Fingerprint for current entry
+            # Includes text, duration, and key synthesis parameters
+            fingerprint_data = {
+                "text": entry["text"],
+                "dur_ms": entry["dur_ms"],
+                "ref_voice": str(self.config.ref_voice.resolve()) if self.config.ref_voice else "",
+                "emo_text": self.config.emo_text,
+                "emo_audio": str(Path(self.config.emo_audio).resolve()) if self.config.emo_audio else "",
+                "emo_alpha": self.config.emo_alpha,
+                "diffusion_steps": self.config.diffusion_steps,
+                "lang": self.config.lang
+            }
+            content_hash = hashlib.md5(json.dumps(fingerprint_data, sort_keys=True).encode()).hexdigest()
+            
             seg_path = self.config.out_dir / f"seg_{seq:04d}.wav"
             
-            # Check for cache hit
-            if seq in existing and seg_path.exists():
+            # 2. Check for cache hit using fingerprint
+            if not force_regen and seq in existing:
                 cached_entry = existing[seq]
-                # Verify text consistency to avoid using stale cache if SRT changed
-                if cached_entry.get("text", "").strip() == entry["text"].strip():
+                # If hash matches and file exists, we can reuse it
+                if cached_entry.get("content_hash") == content_hash and seg_path.exists():
+                    logging.info(f"Segment {seq} Cache Hit (Fingerprint match).")
+                    manifest.append(cached_entry)
+                    continue
+                # Fallback: Check if file exists and text matches (legacy support)
+                elif cached_entry.get("text", "").strip() == entry["text"].strip() and \
+                     cached_entry.get("dur_target_ms") == entry["dur_ms"] and \
+                     seg_path.exists():
+                    logging.info(f"Segment {seq} Cache Hit (Metadata match).")
+                    cached_entry["content_hash"] = content_hash
                     manifest.append(cached_entry)
                     continue
             
@@ -181,7 +192,8 @@ class TTSSynthesizer:
                 new_entry = {
                     "id": entry["id"], "text": entry["text"], "start_ms": entry["start_ms"], 
                     "end_ms": entry["end_ms"], "wav": str(seg_path.resolve()), "dur_target_ms": entry["dur_ms"], 
-                    "dur_actual_ms": actual_ms, "diff_ms": actual_ms - entry["dur_ms"], "speed_factor": round(speed, 3)
+                    "dur_actual_ms": actual_ms, "diff_ms": actual_ms - entry["dur_ms"], "speed_factor": round(speed, 3),
+                    "content_hash": content_hash
                 }
                 manifest.append(new_entry)
                 

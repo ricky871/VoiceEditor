@@ -177,18 +177,7 @@ def subtitle_editor(filter_str: str = "") -> None:
                     "change",
                     lambda _event, item=entry, widget=text_input: item.__setitem__("text", widget.value),
                 )
-                with ui.row().classes("gap-1"):
-                    ui.button(icon="play_arrow", on_click=lambda _e, sid=entry["id"]: preview_segment(sid)).props("flat dense").tooltip("预览/试听")
-                    ui.button(icon="refresh", on_click=lambda _e, sid=entry["id"]: start_synthesis(
-                        emo_text_input, 
-                        diffusion_steps_input, 
-                        burn_subs_checkbox, 
-                        output_video_input, 
-                        progress_bar, 
-                        status_label, 
-                        output_label,
-                        single_segment_id=sid
-                    )).props("flat dense").tooltip("仅重新生成这一句")
+                ui.button("播放合成", on_click=lambda _e, sid=entry["id"]: preview_segment(sid)).props("flat")
 
 
 async def start_processing(
@@ -265,11 +254,11 @@ async def start_synthesis(
     emo_text_input: ui.input,
     diffusion_steps_input: ui.number,
     burn_subs_checkbox: ui.checkbox,
+    force_regen_checkbox: ui.checkbox,
     output_video_input: ui.input,
     progress_bar: ui.linear_progress,
     status_label: ui.label,
     output_label: ui.label,
-    single_segment_id: int | None = None,
 ) -> None:
     if state.processing or state.synthesizing:
         ui.notify("已有任务在运行，请稍候", type="warning")
@@ -286,15 +275,13 @@ async def start_synthesis(
     state.step = 3
     state.progress = 0.7
     state.burn_subs = burn_subs_checkbox.value
+    state.force_regen = force_regen_checkbox.value
     state.emo_text = (emo_text_input.value or "").strip()
     state.diffusion_steps = int(diffusion_steps_input.value or 25)
     state.output_video = (output_video_input.value or "").strip()
 
     progress_bar.value = state.progress
-    if single_segment_id is not None:
-        status_label.text = f"合成中：正在重新生成第 {single_segment_id} 句..."
-    else:
-        status_label.text = "合成中：正在生成语音并混流..."
+    status_label.text = "合成中：正在生成语音并混流..."
 
     try:
         save_entries_to_srt(state.srt_entries, state.srt_path)
@@ -316,11 +303,11 @@ async def start_synthesis(
             "--stitch", # Enable stitching by default as per previous logic
         ]
         
-        if single_segment_id is not None:
-            cmd.extend(["--single_segment", str(single_segment_id)])
-        
         if state.burn_subs:
             cmd.append("--burn-subs")
+            
+        if state.force_regen:
+            cmd.append("--force-regen")
             
         if state.emo_text:
             cmd.extend(["--emo_text", state.emo_text])
@@ -585,7 +572,11 @@ def index_page() -> None:
                 lang_select = ui.select(["zh", "en", "ja", "auto"], value="zh", label="输出语言").classes("w-full")
                 emo_text_input = ui.input("情绪提示（可选，如：whispering）").classes("w-full")
                 diffusion_steps_input = ui.number(label="迭代步数 (Diffusion Steps)", value=25, min=5, max=80, step=1).classes("w-full")
-                burn_subs_checkbox = ui.checkbox("将修改后的字幕添加到视频上方 (Burn Subtitles)").classes("w-full")
+                with ui.row().classes("w-full gap-2"):
+                    burn_subs_checkbox = ui.checkbox("烧录字幕").classes("flex-1")
+                    force_regen_checkbox = ui.checkbox("全量合成").classes("flex-1")
+                    burn_subs_checkbox.tooltip("将修改后的字幕添加到输出视频上方")
+                    force_regen_checkbox.tooltip("忽略缓存并重新生成所有音频片段")
                 output_video_input = ui.input("输出视频路径（可选，默认为工作目录下）").classes("w-full")
 
                 progress_bar = ui.linear_progress(value=0, show_value=False).classes("w-full")
@@ -611,6 +602,7 @@ def index_page() -> None:
                             emo_text_input,
                             diffusion_steps_input,
                             burn_subs_checkbox,
+                            force_regen_checkbox,
                             output_video_input,
                             progress_bar,
                             status_label,

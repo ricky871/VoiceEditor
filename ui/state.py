@@ -37,6 +37,7 @@ class AppState:
     emo_text: str = ""
     diffusion_steps: int = 25
     burn_subs: bool = False
+    force_regen: bool = False
     output_video: str = ""
     segment_current: int = 0
     segment_total: int = 0
