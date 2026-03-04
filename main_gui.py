@@ -429,7 +429,8 @@ def index_page() -> None:
                 diffusion_steps_input = ui.number(label="Diffusion Steps", value=25, min=5, max=80, step=1).classes("w-full")
                 output_video_input = ui.input("输出视频路径（可选）").classes("w-full")
 
-                progress_bar = ui.linear_progress(value=0).classes("w-full")
+                progress_bar = ui.linear_progress(value=0, show_value=False).classes("w-full")
+                progress_label = ui.label("进度: 0%").classes("text-sm text-gray-600")
                 status_label = ui.label("等待开始")
                 output_label = ui.label("输出视频: -").classes("text-gray-600")
 
@@ -482,6 +483,7 @@ def index_page() -> None:
 
                 def refresh_runtime_status() -> None:
                     progress_bar.value = state.progress
+                    progress_label.text = f"进度: {round(state.progress * 100)}%"
                     status_label.text = compute_status_text()
 
                 ui.timer(0.4, refresh_runtime_status)
