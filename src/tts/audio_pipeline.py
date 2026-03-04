@@ -114,18 +114,40 @@ def stitch_segments_from_manifest(
     final_audio += gain_db
     return final_audio.set_frame_rate(sample_rate)
 
-def mux_audio_video(video_path: Path, audio_path: Path, output_path: Path) -> None:
+def mux_audio_video(video_path: Path, audio_path: Path, output_path: Path, srt_path: Path | None = None) -> None:
     """
-    Mux audio track into video using ffmpeg.
+    Mux audio track into video using ffmpeg. Optionally burn subtitles at the top.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    
     cmd = [
-        "ffmpeg", "-y", "-i", str(video_path), "-i", str(audio_path),
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        "ffmpeg", "-y",
+        "-i", str(video_path),
+        "-i", str(audio_path),
+    ]
+
+    if srt_path and srt_path.exists():
+        # Burn subtitles at the top (Alignment=6)
+        # Windows path escaping for ffmpeg: replace ':' with '\:'
+        path_for_ffmpeg = str(srt_path.as_posix()).replace(":", "\\:")
+        filter_str = f"subtitles='{path_for_ffmpeg}':force_style='Alignment=6'"
+        
+        cmd.extend([
+            "-filter_complex", filter_str,
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        ])
+    else:
+        cmd.extend([
+            "-c:v", "copy",
+        ])
+
+    cmd.extend([
+        "-c:a", "aac", "-b:a", "192k",
         "-map", "0:v:0", "-map", "1:a:0", "-map", "0:s?",
         "-map_metadata", "0",
         str(output_path),
-    ]
+    ])
+    
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         logging.error(f"ffmpeg failed to mux audio: {result.stderr.strip()}")

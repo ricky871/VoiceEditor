@@ -94,8 +94,7 @@ def cmd_run(args):
         gain_db=-1.5,
         diffusion_steps=args.diffusion_steps,
         video=video_data["video"],
-        output_video=args.output,
-        verbose=args.verbose
+        output_video=args.output,        burn_subs=args.burn_subs,        verbose=args.verbose
     )
     
     status = run_tts_generation(tts_args)
@@ -134,6 +133,7 @@ def main():
     run_parser.add_argument("--lang", default="zh")
     run_parser.add_argument("--emo-text", default="", help="Emotion prompt for TTS")
     run_parser.add_argument("--diffusion-steps", type=int, default=25, help="Diffusion steps for TTS")
+    run_parser.add_argument("--burn-subs", action="store_true", help="Burn edited subtitles into the final video (top-center alignment)")
 
     args = parser.parse_args()
     

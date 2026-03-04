@@ -85,7 +85,9 @@ def run_tts_generation(args):
             default_vid_out = res_manager.get_output_path(f"{video_src.stem}_dubbed{video_src.suffix}")
             output_vid = config.output_video if config.output_video else default_vid_out
             try:
-                mux_audio_video(video_src, final_audio_path, output_vid)
+                # Pass srt_path if burn_subs is enabled
+                burn_subs = getattr(args, "burn_subs", False)
+                mux_audio_video(video_src, final_audio_path, output_vid, srt_path=srt_path if burn_subs else None)
                 logging.info(f">> 成功合并音频到视频: {output_vid}")
             except RuntimeError:
                 return 1
@@ -114,6 +116,7 @@ def main() -> int:
     parser.add_argument("--diffusion_steps", type=int, default=25)
     parser.add_argument("--video", default="")
     parser.add_argument("--output_video", default="")
+    parser.add_argument("--burn-subs", action="store_true", help="Burn subtitles into output video (top-center alignment)")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     return run_tts_generation(args)

@@ -247,6 +247,7 @@ async def start_processing(
 async def start_synthesis(
     emo_text_input: ui.input,
     diffusion_steps_input: ui.number,
+    burn_subs_checkbox: ui.checkbox,
     output_video_input: ui.input,
     progress_bar: ui.linear_progress,
     status_label: ui.label,
@@ -266,6 +267,7 @@ async def start_synthesis(
     state.cancel_event.clear()
     state.step = 3
     state.progress = 0.7
+    state.burn_subs = burn_subs_checkbox.value
     state.emo_text = (emo_text_input.value or "").strip()
     state.diffusion_steps = int(diffusion_steps_input.value or 25)
     state.output_video = (output_video_input.value or "").strip()
@@ -293,6 +295,9 @@ async def start_synthesis(
             "--stitch", # Enable stitching by default as per previous logic
         ]
         
+        if state.burn_subs:
+            cmd.append("--burn-subs")
+            
         if state.emo_text:
             cmd.extend(["--emo_text", state.emo_text])
             
@@ -556,6 +561,7 @@ def index_page() -> None:
                 lang_select = ui.select(["zh", "en", "ja", "auto"], value="zh", label="输出语言").classes("w-full")
                 emo_text_input = ui.input("情绪提示（可选，如：whispering）").classes("w-full")
                 diffusion_steps_input = ui.number(label="迭代步数 (Diffusion Steps)", value=25, min=5, max=80, step=1).classes("w-full")
+                burn_subs_checkbox = ui.checkbox("将修改后的字幕添加到视频上方 (Burn Subtitles)").classes("w-full")
                 output_video_input = ui.input("输出视频路径（可选，默认为工作目录下）").classes("w-full")
 
                 progress_bar = ui.linear_progress(value=0, show_value=False).classes("w-full")
@@ -580,6 +586,7 @@ def index_page() -> None:
                         on_click=lambda: start_synthesis(
                             emo_text_input,
                             diffusion_steps_input,
+                            burn_subs_checkbox,
                             output_video_input,
                             progress_bar,
                             status_label,
@@ -639,6 +646,9 @@ def index_page() -> None:
                 log_view = ui.textarea().props("readonly").classes("w-full h-[220px] mono-textarea")
 
                 def refresh_logs() -> None:
+                    # Defensive check: if the component is deleted, don't update
+                    if log_view.is_deleted:
+                        return
                     # Only update if content changed to minimize flicker
                     new_text = state.get_log_text()
                     if log_view.value != new_text:
@@ -647,6 +657,8 @@ def index_page() -> None:
                 ui.timer(0.5, refresh_logs)
 
                 def refresh_runtime_status() -> None:
+                    if progress_bar.is_deleted:
+                        return
                     progress_bar.value = state.progress
                     progress_label.text = f"进度: {round(state.progress * 100)}%"
                     status_label.text = compute_status_text()
