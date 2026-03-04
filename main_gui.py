@@ -38,6 +38,20 @@ _ui_handler = UILogHandler(state)
 _ui_handler.setFormatter(logging.Formatter("%(message)s"))
 root_logger.addHandler(_ui_handler)
 
+_device_hint: str | None = None
+
+
+def get_device_hint() -> str:
+    global _device_hint
+    if _device_hint is not None:
+        return _device_hint
+    try:
+        import torch
+        _device_hint = "GPU 加速" if torch.cuda.is_available() else "CPU 模式会较慢"
+    except Exception:
+        _device_hint = "CPU 模式会较慢"
+    return _device_hint
+
 
 def ms_to_srt_time(milliseconds: int) -> pysrt.SubRipTime:
     return pysrt.SubRipTime(milliseconds=max(0, int(milliseconds)))
@@ -423,7 +437,7 @@ def compute_status_text() -> str:
 
     if state.synthesizing:
         if state.segment_total > 0:
-            return f"合成中：第 {state.segment_current}/{state.segment_total} 句（CPU 模式会较慢）"
+            return f"合成中：第 {state.segment_current}/{state.segment_total} 句（{get_device_hint()}）"
         return "合成中：正在生成语音并混流..."
 
     if state.step == 2 and state.srt_entries:
