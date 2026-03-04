@@ -75,6 +75,11 @@ def get_work_url(target_path: Path) -> str | None:
     return f"/work/{rel_path.as_posix()}"
 
 
+def open_url_in_browser(url: str) -> None:
+    safe_url = url.replace("'", "\\'")
+    ui.run_javascript(f"window.open('{safe_url}', '_blank')")
+
+
 def play_audio_url(audio_url: str) -> None:
     safe_url = audio_url.replace("'", "\\'")
     ui.run_javascript(
@@ -352,12 +357,8 @@ async def start_synthesis(
 
 
 def open_output_folder() -> None:
-    if not state.final_video_path:
-        ui.notify("暂无输出文件", type="warning")
-        return
-    target = state.final_video_path.parent
     try:
-        open_path(target)
+        open_url_in_browser("/outputs")
     except Exception as exc:
         ui.notify(f"打开失败: {exc}", type="negative")
 
@@ -534,6 +535,33 @@ def index_page() -> None:
 
 
 app.add_static_files("/work", str((Path.cwd() / "work").resolve()))
+
+
+@ui.page("/outputs")
+def outputs_page() -> None:
+    apply_theme()
+    base_dir = (Path.cwd() / "work").resolve()
+    ui.label("输出文件列表").classes("text-2xl font-bold")
+    ui.label(f"工作目录: {base_dir}").classes("text-sm text-gray-500")
+    ui.separator()
+
+    if not base_dir.exists():
+        ui.label("工作目录不存在或尚未生成文件").classes("text-gray-500")
+        return
+
+    files = [p for p in base_dir.rglob("*") if p.is_file()]
+    if not files:
+        ui.label("暂无输出文件").classes("text-gray-500")
+        return
+
+    files.sort()
+    with ui.column().classes("w-full gap-2"):
+        for item in files:
+            item_url = get_work_url(item)
+            if item_url:
+                ui.link(item.as_posix().replace(base_dir.as_posix() + "/", ""), item_url).props("target=_blank")
+            else:
+                ui.label(item.as_posix())
 
 
 def parse_runtime_args() -> argparse.Namespace:
