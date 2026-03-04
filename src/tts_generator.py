@@ -116,6 +116,7 @@ def main() -> int:
     parser.add_argument("--diffusion_steps", type=int, default=25)
     parser.add_argument("--video", default="")
     parser.add_argument("--output_video", default="")
+    parser.add_argument("--single_segment", type=int, help="Synthesize only a specific segment ID")
     parser.add_argument("--burn-subs", action="store_true", help="Burn subtitles into output video (top-center alignment)")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()

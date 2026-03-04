@@ -177,7 +177,18 @@ def subtitle_editor(filter_str: str = "") -> None:
                     "change",
                     lambda _event, item=entry, widget=text_input: item.__setitem__("text", widget.value),
                 )
-                ui.button("播放合成", on_click=lambda _e, sid=entry["id"]: preview_segment(sid)).props("flat")
+                with ui.row().classes("gap-1"):
+                    ui.button(icon="play_arrow", on_click=lambda _e, sid=entry["id"]: preview_segment(sid)).props("flat dense").tooltip("预览/试听")
+                    ui.button(icon="refresh", on_click=lambda _e, sid=entry["id"]: start_synthesis(
+                        emo_text_input, 
+                        diffusion_steps_input, 
+                        burn_subs_checkbox, 
+                        output_video_input, 
+                        progress_bar, 
+                        status_label, 
+                        output_label,
+                        single_segment_id=sid
+                    )).props("flat dense").tooltip("仅重新生成这一句")
 
 
 async def start_processing(
@@ -258,6 +269,7 @@ async def start_synthesis(
     progress_bar: ui.linear_progress,
     status_label: ui.label,
     output_label: ui.label,
+    single_segment_id: int | None = None,
 ) -> None:
     if state.processing or state.synthesizing:
         ui.notify("已有任务在运行，请稍候", type="warning")
@@ -279,7 +291,10 @@ async def start_synthesis(
     state.output_video = (output_video_input.value or "").strip()
 
     progress_bar.value = state.progress
-    status_label.text = "合成中：正在生成语音并混流..."
+    if single_segment_id is not None:
+        status_label.text = f"合成中：正在重新生成第 {single_segment_id} 句..."
+    else:
+        status_label.text = "合成中：正在生成语音并混流..."
 
     try:
         save_entries_to_srt(state.srt_entries, state.srt_path)
@@ -300,6 +315,9 @@ async def start_synthesis(
             "--video", str(state.video_data["video"]),
             "--stitch", # Enable stitching by default as per previous logic
         ]
+        
+        if single_segment_id is not None:
+            cmd.extend(["--single_segment", str(single_segment_id)])
         
         if state.burn_subs:
             cmd.append("--burn-subs")

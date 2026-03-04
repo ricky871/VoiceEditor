@@ -89,7 +89,16 @@ class TTSSynthesizer:
         if last_exc: raise last_exc
 
     def synthesize(self, entries: List[Dict]) -> tuple[List[Dict], int]:
-        """Synthesize audio segments for all entries."""
+        """Synthesize audio segments for all entries or a specific one."""
+        # 0. Handle single segment synthesis if specified in config
+        single_id = getattr(self.config, "single_segment", None)
+        if single_id is not None:
+             try:
+                 single_id = int(single_id)
+                 logging.info(f">> Targeting single segment ID: {single_id}")
+             except (ValueError, TypeError):
+                 single_id = None
+
         # 1. Explicitly check ref_voice existence with detailed error
         if not self.config.ref_voice or not self.config.ref_voice.exists():
              logging.error(f"CRITICAL: Reference voice file missing at: {self.config.ref_voice}")
@@ -118,6 +127,13 @@ class TTSSynthesizer:
         cancel_event = getattr(self.config, "cancel_event", None)
         pbar = tqdm(entries, desc="正在生成语音", unit="句", disable=not self.config.verbose)
         for seq, entry in enumerate(pbar, start=1):
+            # Skip if focusing on a single segment
+            if single_id is not None and entry.get("id") != single_id:
+                # If we have existing manifest entry, keep it, otherwise manifest will be partial
+                if seq in existing:
+                    manifest.append(existing[seq])
+                continue
+
             if cancel_event is not None and cancel_event.is_set():
                 logging.warning(">> 合成已取消，正在停止（已完成片段将保留）")
                 canceled = True
