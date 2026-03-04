@@ -7,6 +7,20 @@ SERVICE_FILE="${SERVICE_NAME}.service"
 USER_NAME=$(whoami)
 HOME_PATH=$HOME
 
+# --- Handle uninstallation ---
+if [ "$1" == "uninstall" ]; then
+    echo "Uninstalling VoiceEditor systemd service..."
+    sudo systemctl stop $SERVICE_NAME || true
+    sudo systemctl disable $SERVICE_NAME || true
+    if [ -f "/etc/systemd/system/$SERVICE_FILE" ]; then
+        sudo rm "/etc/systemd/system/$SERVICE_FILE"
+        echo "Removed /etc/systemd/system/$SERVICE_FILE"
+    fi
+    sudo systemctl daemon-reload
+    echo "Service uninstalled successfully."
+    exit 0
+fi
+
 echo "Configuring the systemd service for Linux deployment..."
 
 # 1. Generate the actual service file from the template
