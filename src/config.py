@@ -81,7 +81,11 @@ def setup_environment():
     load_dotenv()
     os.environ.setdefault("HF_ENDPOINT", DEFAULT_HF_ENDPOINT)
     os.environ.setdefault("HF_HOME", DEFAULT_HF_HOME)
+    os.environ.setdefault("HF_HUB_CACHE", DEFAULT_HF_HOME)
     os.environ.setdefault("HUGGINGFACE_HUB_CACHE", DEFAULT_HF_HOME)
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+    os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "120")
     
 # Default Paths
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"

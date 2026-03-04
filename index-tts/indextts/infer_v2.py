@@ -2,7 +2,14 @@ import os
 from subprocess import CalledProcessError
 import logging
 
-os.environ['HF_HUB_CACHE'] = './checkpoints/hf_cache'
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+_DEFAULT_HF_CACHE = os.path.join(_PROJECT_ROOT, "checkpoints", "hf_cache")
+os.environ.setdefault("HF_HOME", _DEFAULT_HF_CACHE)
+os.environ.setdefault("HF_HUB_CACHE", _DEFAULT_HF_CACHE)
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", _DEFAULT_HF_CACHE)
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "30")
+os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "120")
 import json
 import re
 import time
@@ -35,6 +42,73 @@ import safetensors
 from transformers import SeamlessM4TFeatureExtractor
 import random
 import torch.nn.functional as F
+
+
+def _hf_cache_dir() -> str:
+    return os.environ.get("HF_HUB_CACHE") or os.environ.get("HUGGINGFACE_HUB_CACHE") or _DEFAULT_HF_CACHE
+
+
+def _hf_download_with_cache_fallback(repo_id: str, filename: str) -> str:
+    cache_dir = _hf_cache_dir()
+    try:
+        local_path = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            cache_dir=cache_dir,
+            local_files_only=True,
+        )
+        logging.info(f">> 使用本地缓存: {repo_id}/{filename}")
+        return local_path
+    except Exception:
+        pass
+
+    try:
+        logging.info(f">> 本地缓存未命中，尝试联网下载: {repo_id}/{filename}")
+        return hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            cache_dir=cache_dir,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"下载模型文件失败: {repo_id}/{filename}。"
+            f"请先运行 `uv run main.py setup` 预下载，或检查 HF_ENDPOINT/网络连通性。原始错误: {exc}"
+        ) from exc
+
+
+def _load_feature_extractor_with_cache_fallback(model_id: str):
+    cache_dir = _hf_cache_dir()
+    try:
+        extractor = SeamlessM4TFeatureExtractor.from_pretrained(
+            model_id,
+            cache_dir=cache_dir,
+            local_files_only=True,
+        )
+        logging.info(f">> 使用本地缓存: {model_id}")
+        return extractor
+    except Exception:
+        logging.info(f">> 本地缓存未命中，尝试联网下载: {model_id}")
+        return SeamlessM4TFeatureExtractor.from_pretrained(model_id, cache_dir=cache_dir)
+
+
+def _load_bigvgan_with_cache_fallback(model_id: str, use_cuda_kernel: bool):
+    cache_dir = _hf_cache_dir()
+    try:
+        model = bigvgan.BigVGAN.from_pretrained(
+            model_id,
+            use_cuda_kernel=use_cuda_kernel,
+            cache_dir=cache_dir,
+            local_files_only=True,
+        )
+        logging.info(f">> 使用本地缓存: {model_id}")
+        return model
+    except Exception:
+        logging.info(f">> 本地缓存未命中，尝试联网下载: {model_id}")
+        return bigvgan.BigVGAN.from_pretrained(
+            model_id,
+            use_cuda_kernel=use_cuda_kernel,
+            cache_dir=cache_dir,
+        )
 
 class IndexTTS2:
     def __init__(
@@ -114,7 +188,7 @@ class IndexTTS2:
                 logging.warning(f"{e!r}")
                 self.use_cuda_kernel = False
 
-        self.extract_features = SeamlessM4TFeatureExtractor.from_pretrained("facebook/w2v-bert-2.0")
+        self.extract_features = _load_feature_extractor_with_cache_fallback("facebook/w2v-bert-2.0")
         self.semantic_model, self.semantic_mean, self.semantic_std = build_semantic_model(
             os.path.join(self.model_dir, self.cfg.w2v_stat))
         self.semantic_model = self.semantic_model.to(self.device)
@@ -123,7 +197,10 @@ class IndexTTS2:
         self.semantic_std = self.semantic_std.to(self.device)
 
         semantic_codec = build_semantic_codec(self.cfg.semantic_codec)
-        semantic_code_ckpt = hf_hub_download("amphion/MaskGCT", filename="semantic_codec/model.safetensors")
+        semantic_code_ckpt = _hf_download_with_cache_fallback(
+            "amphion/MaskGCT",
+            "semantic_codec/model.safetensors",
+        )
         safetensors.torch.load_model(semantic_codec, semantic_code_ckpt)
         self.semantic_codec = semantic_codec.to(self.device)
         self.semantic_codec.eval()
@@ -152,8 +229,9 @@ class IndexTTS2:
         # logging.info(f">> s2mel weights restored from: {s2mel_path}")
 
         # load campplus_model
-        campplus_ckpt_path = hf_hub_download(
-            "funasr/campplus", filename="campplus_cn_common.bin"
+        campplus_ckpt_path = _hf_download_with_cache_fallback(
+            "funasr/campplus",
+            "campplus_cn_common.bin",
         )
         campplus_model = CAMPPlus(feat_dim=80, embedding_size=192)
         campplus_model.load_state_dict(torch.load(campplus_ckpt_path, map_location="cpu"))
@@ -162,7 +240,7 @@ class IndexTTS2:
         # logging.info(f">> campplus_model weights restored from: {campplus_ckpt_path}")
 
         bigvgan_name = self.cfg.vocoder.name
-        self.bigvgan = bigvgan.BigVGAN.from_pretrained(bigvgan_name, use_cuda_kernel=self.use_cuda_kernel)
+        self.bigvgan = _load_bigvgan_with_cache_fallback(bigvgan_name, self.use_cuda_kernel)
         self.bigvgan = self.bigvgan.to(self.device)
         self.bigvgan.remove_weight_norm()
         self.bigvgan.eval()
