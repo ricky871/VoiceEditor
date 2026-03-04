@@ -155,17 +155,19 @@ def mux_audio_video(video_path: Path, audio_path: Path, output_path: Path, srt_p
         # Windows path escaping for ffmpeg: replace ':' with '\:'
         path_for_ffmpeg = str(srt_path.as_posix()).replace(":", "\\:")
         
-        # Support Chinese font for burning subtitles, try multiple common paths/names
-        # Note: ffmpeg font paths need forward slashes and escaped colons on Windows
-        font_str = ""
-        import platform
+        # Select a font that supports Chinese characters for Windows/Linux
+        # Alignment=6 is Top-Center. Alignment=2 is Bottom-Center (default).
+        font_style = "Alignment=6"
         if platform.system() == "Windows":
-             msyh = "C\\:/Windows/Fonts/msyh.ttc"
-             simhei = "C\\:/Windows/Fonts/simhei.ttf"
-             # Use fontfile if possible, or fallback to font name
-             font_str = f":fontfile='{msyh}':font='Microsoft YaHei'" 
-        
-        filter_str = f"subtitles='{path_for_ffmpeg}':force_style='Alignment=6{font_str}'"
+            # Microsoft YaHei is standard on Windows. 
+            # Note: FFmpeg subtitles filter on Windows often needs the font name, not path.
+            font_style += ",Fontname=Microsoft YaHei"
+        else:
+            # On Linux, try common fonts like Noto Sans CJK or WenQuanYi
+            # This is a fallback string; FFmpeg will try to find a match.
+            font_style += ",Fontname=Noto Sans CJK SC,Fontname=WenQuanYi Micro Hei"
+
+        filter_str = f"subtitles='{path_for_ffmpeg}':force_style='{font_style}'"
         
         cmd.extend([
             "-filter_complex", filter_str,
