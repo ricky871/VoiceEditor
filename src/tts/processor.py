@@ -151,13 +151,20 @@ class TTSSynthesizer:
 
             try:
                 self.safe_infer(base_kwargs, candidates, seq)
+                if not seg_path.exists():
+                     raise FileNotFoundError(f"TTS completed but segment file not found: {seg_path}")
+                
                 generated = AudioSegment.from_file(seg_path)
                 retimed, actual_ms, speed = retime_segment_to_target(generated, entry["dur_ms"], self.config.sample_rate)
                 retimed.export(seg_path, format="wav")
                 
+                # Check file size to ensure it's not a dummy mock or corrupted
+                if seg_path.stat().st_size < 100:
+                     raise RuntimeError(f"Synthesized segment {seq} is too small, likely corrupted.")
+                
                 new_entry = {
                     "id": entry["id"], "text": entry["text"], "start_ms": entry["start_ms"], 
-                    "end_ms": entry["end_ms"], "wav": str(seg_path), "dur_target_ms": entry["dur_ms"], 
+                    "end_ms": entry["end_ms"], "wav": str(seg_path.resolve()), "dur_target_ms": entry["dur_ms"], 
                     "dur_actual_ms": actual_ms, "diff_ms": actual_ms - entry["dur_ms"], "speed_factor": round(speed, 3)
                 }
                 manifest.append(new_entry)

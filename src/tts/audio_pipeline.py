@@ -99,8 +99,32 @@ def stitch_segments_from_manifest(
     ).set_channels(1)
 
     for entry in tqdm(manifest, desc="Stitching segments", unit="seg"):
+        wav_path = Path(entry["wav"])
+        if not wav_path.exists():
+            # In some multi-platform or docker scenarios, relative paths from manifest may fail
+            # Let's try to resolve it relative to manifest location or CWD if absolute fails
+            logging.warning(f"Segment file not found at {wav_path}. Attempting local resolution.")
+            # manifest is often in work/out_segs, and segments are there too
+            local_name = wav_path.name
+            # common places to look
+            candidates = [
+                Path("work/out_segs") / local_name,
+                Path("out_segs") / local_name,
+                Path(".") / local_name
+            ]
+            found = False
+            for cand in candidates:
+                if cand.exists():
+                    wav_path = cand
+                    found = True
+                    break
+            
+            if not found:
+                logging.error(f"Failed to find segment {entry.get('id', 'unknown')} at {entry['wav']} or common fallbacks.")
+                continue
+
         try:
-            segment_audio = AudioSegment.from_file(entry["wav"]).set_channels(1).set_frame_rate(sample_rate)
+            segment_audio = AudioSegment.from_file(str(wav_path)).set_channels(1).set_frame_rate(sample_rate)
             segment_audio, _, _ = retime_segment_to_target(
                 segment_audio,
                 entry["dur_target_ms"],
