@@ -4,24 +4,40 @@
 INSTALL_DIR=$(pwd)
 SERVICE_NAME="voiceeditor"
 SERVICE_FILE="${SERVICE_NAME}.service"
-USER_NAME=$(whoami)
-HOME_PATH=$HOME
+if [ -n "$SUDO_USER" ] && [ "$SUDO_USER" != "root" ]; then
+    USER_NAME="$SUDO_USER"
+else
+    USER_NAME=$(whoami)
+fi
+
+HOME_PATH=$(getent passwd "$USER_NAME" | cut -d: -f6)
+if [ -z "$HOME_PATH" ]; then
+    HOME_PATH=$HOME
+fi
 
 # Find the absolute path of 'uv'
-# If running with sudo, 'which' might search root's PATH, so we also check common user paths
-USER_UV_PATH=$(sudo -u $USER_NAME which uv 2>/dev/null)
-if [ -n "$USER_UV_PATH" ]; then
-    UV_PATH="$USER_UV_PATH"
-elif [ -f "$HOME/.cargo/bin/uv" ]; then
-    UV_PATH="$HOME/.cargo/bin/uv"
-elif [ -f "$HOME/.local/bin/uv" ]; then
-    UV_PATH="$HOME/.local/bin/uv"
-elif command -v uv >/dev/null 2>&1; then
+UV_PATH=""
+if command -v uv >/dev/null 2>&1; then
     UV_PATH=$(command -v uv)
-else
-    echo "Error: 'uv' executable not found. Please ensure 'uv' is installed and in your PATH."
+fi
+
+if [ -z "$UV_PATH" ] || [ ! -x "$UV_PATH" ]; then
+    for candidate in "$HOME_PATH/.local/bin/uv" "$HOME_PATH/.cargo/bin/uv" "/usr/local/bin/uv" "/usr/bin/uv"; do
+        if [ -x "$candidate" ]; then
+            UV_PATH="$candidate"
+            break
+        fi
+    done
+fi
+
+if [ -z "$UV_PATH" ] || [ ! -x "$UV_PATH" ]; then
+    echo "Error: 'uv' executable not found for user '$USER_NAME'."
+    echo "Checked PATH and common locations under $HOME_PATH."
     exit 1
 fi
+
+echo "Deploy user: $USER_NAME"
+echo "Using home: $HOME_PATH"
 echo "Using 'uv' at: $UV_PATH"
 
 # --- Handle uninstallation ---
