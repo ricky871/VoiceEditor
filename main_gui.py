@@ -311,10 +311,31 @@ def open_output_folder() -> None:
 
 
 def clear_work_dir(target_dir: Path, dialog: ui.dialog) -> None:
+    errors: list[str] = []
     try:
-        if target_dir.exists():
-            shutil.rmtree(target_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
+        for child in target_dir.iterdir():
+            try:
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink(missing_ok=True)
+            except Exception as exc:
+                errors.append(f"{child.name}: {exc}")
+
+        if errors:
+            ui.notify(f"清空未完全成功，首个错误: {errors[0]}", type="warning")
+            return
+
+        state.video_data = None
+        state.srt_entries = []
+        state.srt_path = None
+        state.final_video_path = None
+        state.segment_current = 0
+        state.segment_total = 0
+        state.step = 1
+        state.progress = 0.0
+        subtitle_editor.refresh()
         ui.notify("工作目录已清空", type="positive")
     except Exception as exc:
         ui.notify(f"清空失败: {exc}", type="negative")
@@ -322,12 +343,22 @@ def clear_work_dir(target_dir: Path, dialog: ui.dialog) -> None:
         dialog.close()
 
 
-def confirm_clear_work_dir() -> None:
+def resolve_work_dir_target(work_dir_input: ui.input | None = None) -> Path:
+    if work_dir_input is not None:
+        typed_work_dir = (work_dir_input.value or "").strip()
+        if typed_work_dir:
+            state.work_dir = typed_work_dir
+
+    state.work_dir = (state.work_dir or "work").strip() or "work"
+    return Path(state.work_dir).resolve()
+
+
+def confirm_clear_work_dir(work_dir_input: ui.input | None = None) -> None:
     if state.processing or state.synthesizing:
         ui.notify("任务运行中，无法清空工作目录", type="warning")
         return
 
-    target_dir = Path(state.work_dir).resolve()
+    target_dir = resolve_work_dir_target(work_dir_input)
     project_root = Path.cwd().resolve()
     if not target_dir.exists() or not target_dir.is_dir():
         ui.notify("工作目录不存在或不可用", type="warning")
@@ -417,7 +448,7 @@ def index_page() -> None:
 
                 ui.button("停止当前任务", on_click=stop_current_task).classes("w-full")
 
-                ui.button("清空工作目录", on_click=confirm_clear_work_dir).classes("w-full")
+                ui.button("清空工作目录", on_click=lambda: confirm_clear_work_dir(work_dir_input)).classes("w-full")
 
                 ui.button("打开输出目录", on_click=open_output_folder).classes("w-full")
 
