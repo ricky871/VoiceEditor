@@ -29,6 +29,7 @@ dependencies = [
     "jieba",
     "opencc-python-reimplemented",
     "indextts",
+    "nicegui",
 ]
 
 [tool.uv]

@@ -114,8 +114,14 @@ class TTSSynthesizer:
 
         manifest = []
         failed = []
+        canceled = False
+        cancel_event = getattr(self.config, "cancel_event", None)
         pbar = tqdm(entries, desc="正在生成语音", unit="句", disable=not self.config.verbose)
         for seq, entry in enumerate(pbar, start=1):
+            if cancel_event is not None and cancel_event.is_set():
+                logging.warning(">> 合成已取消，正在停止（已完成片段将保留）")
+                canceled = True
+                break
             seg_path = self.config.out_dir / f"seg_{seq:04d}.wav"
             
             # Check for cache hit
@@ -172,6 +178,8 @@ class TTSSynthesizer:
         
         # Final save to ensure everything is captured
         self.save_manifest(manifest, self.config.out_dir, silent=True)
+        if canceled:
+            return manifest, 130
         return manifest, (1 if failed and not manifest else 0)
 
     @staticmethod

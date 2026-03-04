@@ -17,13 +17,18 @@
 
 ## 🛠️ 环境准备
 
-本项目强制使用 [uv](https://github.com/astral-sh/uv) 进行管理，不再建议手动配置虚拟环境。
+在开始之前，请确保您的系统中已安装以下前置软件：
 
-### 1. 安装 uv
+### 1. 安装 FFmpeg (核心音视频处理)
+- **Windows**: 推荐使用 [Scoop](https://scoop.sh/) 安装：`scoop install ffmpeg`。或从 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 下载解压，并将 `bin` 目录手动添加到系统环境变量 `PATH`。
+- **Linux**: 使用包管理器安装，例如 Ubuntu/Debian: `sudo apt update && sudo apt install ffmpeg`。
+
+### 2. 安装 uv (包与环境管理)
+本项目强制使用 [uv](https://github.com/astral-sh/uv) 进行管理，不再建议手动配置虚拟环境。
 - **Windows**: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
 - **Linux/macOS**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-### 2. 初始化环境与权重
+### 3. 初始化环境与权重
 针对中国大陆用户，默认已启用 ModelScope 和 TUNA 镜像：
 ```bash
 uv run main.py setup

@@ -42,10 +42,10 @@ class TTSModelManager:
             use_ds = True
             logging.info("DeepSpeed detected. Enabling for faster inference.")
         except ImportError:
-            # logging.info("DeepSpeed not found. Running in standard mode.") 
+            logging.info("DeepSpeed not found. Running in standard mode.") 
             pass
 
-        # logging.info(f"Initializing IndexTTS2 with config: {self.cfg_path}")
+        logging.info(f"Initializing IndexTTS2 with config: {self.cfg_path}")
         self.tts = IndexTTS2(
             cfg_path=str(self.cfg_path),
             model_dir=str(self.model_dir),

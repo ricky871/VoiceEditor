@@ -21,11 +21,14 @@ def run_tts_generation(args):
     """Entry point for TTS generation using the modular components."""
     # 0. Setup Environment and Logging
     setup_environment()
-    # logging.basicConfig(**get_logging_config(args.verbose)) # Already configured in main
+    # Configure logging if not already configured (e.g. running as subprocess)
+    if not logging.getLogger().handlers:
+        logging.basicConfig(**get_logging_config(args.verbose))
     
     # 1. Configuration & Resource Management
     config = Config.from_args(args)
     config.resolve_paths()
+    config.cancel_event = getattr(args, "cancel_event", None)
     
     res_manager = ResourceManager(work_dir=config.out_dir.parent, out_dir=config.out_dir)
     res_manager.ensure_dirs()
@@ -49,9 +52,10 @@ def run_tts_generation(args):
     logging.debug(f"已加载 {len(entries)} 条字幕。")
     
     # 3. Model Loading
+    logging.info("Calling load_model...")
     try:
         tts = mod_manager.load_model()
-        # logging.info("TTS model loaded successfully.")
+        logging.info("TTS model loaded successfully.")
     except Exception as exc:
         logging.error(f"模型加载失败: {exc}")
         return 2
