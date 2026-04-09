@@ -2,6 +2,18 @@
 
 VoiceEditor 是一个基于 IndexTTS2 的视频配音与语音重构工具，提供 CLI 与 NiceGUI 两种使用方式，覆盖：视频获取、语音转写、参考音提取、分句合成、音视频合流。
 
+## 📚 文档导航
+
+- **[README.md](README.md)** - 项目介绍和使用指南（你在这里）
+- **[PROJECT_STATUS.md](PROJECT_STATUS.md)** - 完整项目状态和问题解决进展
+- **[TEST_COVERAGE.md](TEST_COVERAGE.md)** - 测试覆盖详情和改进规划
+- **[DEVELOPMENT.md](DEVELOPMENT.md)** - 架构设计和开发指南
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - 常见问题和故障排查
+
+> 开发者: 请先阅读 [DEVELOPMENT.md](DEVELOPMENT.md)  
+> 测试人员: 请先阅读 [TEST_COVERAGE.md](TEST_COVERAGE.md)  
+> 用户/运维: 请先阅读 [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+
 ## ✨ 核心能力
 
 - 自动化流程：从视频到最终配音视频的一站式流水线。
@@ -84,15 +96,15 @@ uv run .\main.py --verbose run --url "https://www.youtube.com/watch?v=xxxx"
 ### 输出路径规则
 
 - 未传 `--output` 时，默认输出为：`<work-dir>/<输入视频名>_dubbed.<原后缀>`。
-- 合成中间产物在 `work/out_segs/`。
+- 合成中间产物在 `work/segments/`。
 
 ## 📁 主要产物
 
 - `work/*.srt`：转写字幕（可编辑）
-- `work/*_voice.wav`：提取的参考音
-- `work/out_segs/seg_0001.wav ...`：分句合成音频
-- `work/out_segs/manifest.json`：分句清单（用于恢复和统计）
-- `work/merged_audio.wav`：合并后的整轨音频
+- `work/style_ref.wav`：提取的音色参考（由 IndexTTS2 使用）
+- `work/segments/seg_0001.wav ...`：分句合成音频
+- `work/segments/segments.json`：分句清单（用于恢复和统计）
+- `work/audio_dubbed.wav`：合并后的整轨音频
 - `work/*_dubbed.mp4`（或 `--output` 指定路径）：最终视频
 
 ## ♻️ 可恢复与缓存行为
@@ -152,7 +164,7 @@ uv sync
 
 ### 4) 合成失败但已有部分输出
 
-- 检查 `work/out_segs/manifest.json` 与分段文件是否存在。
+- 检查 `work/segments/segments.json` 与分段文件是否存在。
 - 重新执行通常可复用已完成片段。
 
 ## 🤝 开发文档

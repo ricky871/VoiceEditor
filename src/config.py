@@ -20,22 +20,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-def patch_tqdm(disable=True):
-    """Globally disable or enable tqdm progress bars."""
-    # ... previous code ...
-
-def get_device() -> str:
-    """Detect available compute device (CUDA, MPS, XPU, or CPU)."""
-    import torch
-    if torch.cuda.is_available():
-        return "cuda"
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps"
-    if hasattr(torch, "xpu") and torch.xpu.is_available():
-        return "xpu"
-    return "cpu"
-
-def patch_tqdm(disable=True):
+def patch_tqdm(disable: bool = True):
     """Globally disable or enable tqdm progress bars."""
     try:
         from tqdm import tqdm as real_tqdm
@@ -50,21 +35,31 @@ def patch_tqdm(disable=True):
                 tqdm_nb.tqdm = partial(tqdm_nb.tqdm, disable=True)
             except ImportError:
                 pass
+        else:
+            # Restore to default if needed (less common)
+            tqdm.tqdm = real_tqdm
     except ImportError:
         pass
+
+
+def get_device() -> str:
+    """Detect available compute device (CUDA, MPS, XPU, or CPU)."""
+    import torch
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    if hasattr(torch, "xpu") and torch.xpu.is_available():
+        return "xpu"
+    return "cpu"
+
 
 # Configure all major noisy loggers to ERROR level
 try:
     import logging as py_logging
     # Try multiple common name variants
-    for log_name in ["transformers", "diffusers", "urllib3", "huggingface_hub", "torch"]:
+    for log_name in ["transformers", "diffusers", "urllib3", "huggingface_hub", "torch", "filelock", "fsspec"]:
         py_logging.getLogger(log_name).setLevel(py_logging.ERROR)
-except Exception:
-    pass
-
-try:
-    import logging as py_logging
-    py_logging.getLogger("transformers").setLevel(py_logging.ERROR)
 except Exception:
     pass
 
@@ -104,8 +99,16 @@ def setup_environment():
     
 # Default Paths
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
-WORK_DIR = PROJECT_ROOT / "work"
-OUT_SEGS_DIR = WORK_DIR / "out_segs"
+
+# Unified Naming Constants
+DEFAULT_WORK_DIR = "work"
+DIRNAME_SEGMENTS = "segments"
+FILENAME_STYLE_REF = "style_ref.wav"
+FILENAME_MANIFEST = "segments.json"
+FILENAME_MERGED_AUDIO = "audio_dubbed.wav"
+
+WORK_DIR = PROJECT_ROOT / DEFAULT_WORK_DIR
+OUT_SEGS_DIR = WORK_DIR / DIRNAME_SEGMENTS
 
 class Config:
     """
@@ -115,9 +118,9 @@ class Config:
         self,
         cfg_path: str = str(CHECKPOINTS_DIR / "config.yaml"),
         model_dir: str = str(CHECKPOINTS_DIR),
-        ref_voice: str = str(WORK_DIR / "voice_ref.wav"),
-        srt_pattern: str = str(WORK_DIR / "*.srt"),
-        out_dir: str = str(OUT_SEGS_DIR),
+        ref_voice: str = "",  # Default handled in resolve_paths
+        srt_pattern: str = "", # Default handled in resolve_paths
+        out_dir: str = "",     # Default handled in resolve_paths
         duration_mode: str = "seconds",
         tokens_per_sec: float = 150.0,
         emo_text: str = "",
@@ -131,14 +134,18 @@ class Config:
         diffusion_steps: int = 25,
         video: str = "",
         output_video: str = "",
+        burn_subs: bool = False,
+        max_retries: int = 3,
         verbose: bool = False,
         force_regen: bool = False,
+        work_dir: str = DEFAULT_WORK_DIR,
     ):
+        self.work_dir = Path(work_dir)
         self.cfg_path = Path(cfg_path)
         self.model_dir = Path(model_dir)
-        self.ref_voice = Path(ref_voice)
+        self.ref_voice = Path(ref_voice) if ref_voice else None
         self.srt_pattern = srt_pattern
-        self.out_dir = Path(out_dir)
+        self.out_dir = Path(out_dir) if out_dir else None
         self.duration_mode = duration_mode
         self.tokens_per_sec = tokens_per_sec
         self.emo_text = emo_text
@@ -152,6 +159,8 @@ class Config:
         self.diffusion_steps = diffusion_steps
         self.video = Path(video) if video else None
         self.output_video = Path(output_video) if output_video else None
+        self.burn_subs = burn_subs
+        self.max_retries = max(1, int(max_retries))
         self.verbose = verbose
         self.force_regen = force_regen
         self.default_model_dir = CHECKPOINTS_DIR
@@ -178,19 +187,112 @@ class Config:
             diffusion_steps=getattr(args, "diffusion_steps", 25),
             video=args.video,
             output_video=args.output_video,
+            burn_subs=getattr(args, "burn_subs", False),
+            max_retries=getattr(args, "max_retries", 3),
             verbose=args.verbose,
             force_regen=getattr(args, "force_regen", False),
         )
 
     def resolve_paths(self):
         """Resolve paths to absolute paths and ensure directories exist."""
+        # 1. Resolve Work Dir
+        work_path = self.work_dir.resolve()
+        
+        # 2. Handle out_dir (segments directory)
+        if not self.out_dir:
+            self.out_dir = work_path / DIRNAME_SEGMENTS
+        else:
+            self.out_dir = self.out_dir.resolve()
+            
+        # 3. Handle srt_pattern
+        if not self.srt_pattern:
+            # Look for any .srt file in work_dir
+            srts = list(work_path.glob("*.srt"))
+            if srts:
+                # Use the first one or the most recently modified? 
+                # For now, just the glob pattern as per old behavior
+                self.srt_pattern = str(work_path / "*.srt")
+            else:
+                self.srt_pattern = str(work_path / "*.srt")
+        
+        # 4. Handle ref_voice (style reference)
+        if not self.ref_voice:
+            # Check for new naming convention first
+            new_style_ref = work_path / FILENAME_STYLE_REF
+            old_voice_ref = work_path / "voice_ref.wav"
+            
+            if new_style_ref.exists():
+                self.ref_voice = new_style_ref
+            elif old_voice_ref.exists():
+                logging.info(f"Found legacy reference voice: {old_voice_ref}. Using it.")
+                self.ref_voice = old_voice_ref
+            else:
+                # Fallback to the new default name for future generation
+                self.ref_voice = new_style_ref
+        else:
+            self.ref_voice = self.ref_voice.resolve()
+
+        # 5. Resolve other standard paths
         self.cfg_path = self.cfg_path.resolve()
         self.model_dir = self.model_dir.resolve()
-        self.out_dir = self.out_dir.resolve()
+        
+        # Create directories if they don't exist
+        work_path.mkdir(parents=True, exist_ok=True)
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+
+class SensitiveInfoFilter(logging.Filter):
+    """
+    Logging filter to redact sensitive information from logs.
+    Protects user privacy by masking paths, usernames, and credentials.
+    """
+    
+    # Patterns to redact
+    PATTERNS = [
+        # User home directory paths
+        (r'[C-Z]:\\Users\\[^\s\\]+', lambda m: '<USER_HOME>'),
+        (r'/home/[^\s/]+', lambda m: '<USER_HOME>'),
+        (r'/Users/[^\s/]+', lambda m: '<USER_HOME>'),
+        # Windows full paths (replace full path with just filename)
+        (r'[C-Z]:\\(?:[^\s\\]+\\)*([^\s\\]+)', lambda m: f'<path>/{m.group(1)}'),
+        # Email addresses
+        (r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', lambda m: '<EMAIL>'),
+        # IP addresses (but keep localhost)
+        (r'(?:(?!127\.0\.0\.1)\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', lambda m: '<IP>'),
+        # URLs with credentials
+        (r'(https?://)[^\s:]+:[^\s@]+@', lambda m: r'\1<USER>:<PASS>@'),
+        # Model names with timestamps (make less identifiable)
+        (r'checkpoints/[^\s/]+', lambda m: '<MODEL>'),
+    ]
+    
+    def filter(self, record):
+        """Filter log record to remove sensitive information."""
+        try:
+            msg = str(record.msg)
+            # Apply each pattern
+            for pattern, replacement in self.PATTERNS:
+                msg = re.sub(pattern, replacement, msg, flags=re.IGNORECASE)
+            record.msg = msg
+            
+            # Also filter exc_text if it exists
+            if record.exc_text:
+                record.exc_text = self._redact_text(record.exc_text)
+        except Exception:
+            pass  # If filtering fails, let the message through unfiltered
+        
+        return True
+    
+    @staticmethod
+    def _redact_text(text: str) -> str:
+        """Redact sensitive information from text."""
+        if not text:
+            return text
+        for pattern, replacement in SensitiveInfoFilter.PATTERNS:
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+        return text
 
 def get_logging_config(verbose: bool = False):
     """
-    Returns logging configuration.
+    Returns logging configuration with sensitive info filtering.
     Simplified format for cleaner terminal output.
     """
     # Suppress noisy libraries
@@ -202,8 +304,22 @@ def get_logging_config(verbose: bool = False):
     logging.getLogger("matplotlib").setLevel(logging.WARNING)
     logging.getLogger("transformers").setLevel(logging.ERROR) # Suppress warnings
 
-    return {
+    config = {
         "level": logging.DEBUG if verbose else logging.INFO,
         "format": "%(message)s" if not verbose else "%(asctime)s %(levelname)s %(message)s",
         "datefmt": "%H:%M:%S",
     }
+    
+    return config
+
+def apply_logging_filters():
+    """Apply sensitive info filter to all loggers."""
+    filter_obj = SensitiveInfoFilter()
+    
+    # Apply to root logger
+    logging.root.addFilter(filter_obj)
+    
+    # Apply to common application loggers
+    for logger_name in ['__main__', 'src', 'voiceeditor']:
+        logger = logging.getLogger(logger_name)
+        logger.addFilter(filter_obj)

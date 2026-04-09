@@ -3,10 +3,38 @@ import subprocess
 import platform
 import numpy as np
 import librosa
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 from tqdm import tqdm
 from pydub import AudioSegment
+
+
+def ensure_safe_srt_for_ffmpeg(srt_path: Path, work_dir: str = "work") -> str:
+    """
+    Ensure SRT path is safe for FFmpeg filter usage.
+    If path contains special characters (spaces, quotes, etc), copy to a safe location.
+    Returns the path formatted for use inside an FFmpeg filter string:
+    - Forward slashes (backslashes converted via as_posix)
+    - Windows drive letter colon escaped as \\: (e.g. C\\:/path/file.srt)
+    """
+    srt_p = Path(srt_path).resolve()
+
+    # Check for characters that are problematic in FFmpeg filter strings.
+    # Backslashes are NOT listed here — they are handled later via as_posix().
+    problematic_chars = ["'", '"', ' ', '&', '|', '<', '>', '(', ')', '[', ']', '{', '}', ';', '`', '$']
+    has_problematic = any(char in str(srt_p) for char in problematic_chars)
+
+    if has_problematic:
+        logging.info("FFmpeg: Detected special characters in subtitle path. Using safe copy in work directory.")
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+        safe_srt = Path(work_dir) / "ffmpeg_safe_subtitles.srt"
+        shutil.copy(str(srt_p), str(safe_srt))
+        srt_p = safe_srt.resolve()
+
+    # Convert to POSIX forward slashes and escape the Windows drive-letter colon.
+    # FFmpeg filter syntax requires:  C\:/path/to/file.srt
+    return srt_p.as_posix().replace(":", "\\:")
 
 def retime_segment_to_target(
     segment: AudioSegment,
@@ -86,40 +114,72 @@ def stitch_segments_from_manifest(
     manifest: List[Dict],
     sample_rate: int,
     gain_db: float,
+    manifest_dir: Path | None = None,  # Directory containing manifest.json for relative path resolution
 ) -> AudioSegment:
     """
     Stitch individual audio segments from manifest into a final composite audio segment.
+    Automatically skips segments marked as failed.
+    
+    Args:
+        manifest: List of segment entries from manifest.json
+        sample_rate: Target sample rate in Hz
+        gain_db: Gain in dB to apply
+        manifest_dir: Directory containing manifest.json (for relative path resolution)
     """
     if not manifest:
         raise ValueError("Manifest is empty")
 
-    final_length = max(item["end_ms"] for item in manifest) + 100
+    # Default manifest_dir to current working directory if not specified
+    if manifest_dir is None:
+        manifest_dir = Path.cwd()
+    else:
+        manifest_dir = Path(manifest_dir).resolve()
+
+    # Filter out failed segments for stitching
+    valid_entries = [item for item in manifest if not item.get("failed", False)]
+    failed_count = len(manifest) - len(valid_entries)
+    
+    if failed_count > 0:
+        logging.warning(f"Stitching: Skipping {failed_count} failed segments. Using {len(valid_entries)}/{len(manifest)} valid segments.")
+    
+    if not valid_entries:
+        raise ValueError("All segments failed. Cannot create final audio.")
+
+    final_length = max(item["end_ms"] for item in valid_entries) + 100
     final_audio = AudioSegment.silent(
         duration=final_length,
         frame_rate=sample_rate,
     ).set_channels(1)
 
-    for entry in tqdm(manifest, desc="Stitching segments", unit="seg"):
-        raw_wav = entry["wav"]
-        # Handle Windows-style paths encoded in JSON (e.g., D:\\Path) on Linux
-        if "\\" in raw_wav and "/" not in raw_wav:
-             # Likely a Windows path being read on Linux
-             normalized_wav = raw_wav.replace("\\", "/")
-             # If it has a drive letter like D:/, strip it for relative lookup
-             if ":" in normalized_wav:
-                 normalized_wav = normalized_wav.split(":", 1)[1].lstrip("/")
-             wav_path = Path(normalized_wav)
-        else:
-             wav_path = Path(raw_wav)
+    for entry in tqdm(valid_entries, desc="Stitching segments", unit="seg"):
+        # Skip failed entries
+        if entry.get("failed", False):
+            logging.debug(f"Skipping failed segment {entry.get('id', '?')}: {entry.get('error_reason', 'unknown')}")
+            continue
+            
+        raw_wav = entry.get("wav")
+        if not raw_wav:
+            logging.warning(f"Segment {entry.get('id', '?')} has no wav path. Skipping.")
+            continue
+            
+        # Resolve path - support both absolute and relative paths (with forward slashes for portability)
+        wav_path = Path(raw_wav)
+        
+        # If relative, resolve relative to manifest_dir
+        if not wav_path.is_absolute():
+            wav_path = manifest_dir / wav_path
+        
+        wav_path = wav_path.resolve()
 
         if not wav_path.exists():
             # In some multi-platform or docker scenarios, relative paths from manifest may fail
             # Let's try to resolve it relative to manifest location or CWD if absolute fails
-            logging.warning(f"Segment file not found at {raw_wav}. Attempting local resolution.")
+            logging.warning(f"Segment file not found at {wav_path}. Attempting fallback resolution.")
             # manifest is often in work/out_segs, and segments are there too
-            local_name = Path(raw_wav.replace("\\", "/")).name
+            local_name = Path(raw_wav).name
             # common places to look
             candidates = [
+                manifest_dir / local_name,
                 Path("work/out_segs") / local_name,
                 Path("out_segs") / local_name,
                 Path(".") / local_name,
@@ -166,8 +226,8 @@ def mux_audio_video(video_path: Path, audio_path: Path, output_path: Path, srt_p
 
     if srt_path and srt_path.exists():
         # Burn subtitles at the top (Alignment=6)
-        # Windows path escaping for ffmpeg: replace ':' with '\:'
-        path_for_ffmpeg = str(srt_path.as_posix()).replace(":", "\\:")
+        # Use safe path handling for FFmpeg
+        safe_srt_path = ensure_safe_srt_for_ffmpeg(Path(srt_path), work_dir=str(output_path.parent))
         
         # Select a font that supports Chinese characters for Windows/Linux
         # Alignment=6 is Top-Center. Alignment=2 is Bottom-Center (default).
@@ -181,7 +241,7 @@ def mux_audio_video(video_path: Path, audio_path: Path, output_path: Path, srt_p
             # This is a fallback string; FFmpeg will try to find a match.
             font_style += ",Fontname=Noto Sans CJK SC,Fontname=WenQuanYi Micro Hei"
 
-        filter_str = f"subtitles='{path_for_ffmpeg}':force_style='{font_style}'"
+        filter_str = f"subtitles='{safe_srt_path}':force_style='{font_style}'"
         
         cmd.extend([
             "-filter_complex", filter_str,

@@ -20,6 +20,8 @@ from tqdm import tqdm
 # Configure logging
 # logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
+from src.config import FILENAME_STYLE_REF
+
 class VideoEngine:
     def __init__(self, work_dir: str = "work", verbose: bool = False):
         self.work_dir = Path(work_dir)
@@ -153,89 +155,94 @@ class VideoEngine:
                 tmp_srt_path.unlink()
             return None
 
-    def extract_voice_ref(self, audio_path: Path, duration_sec: int = 10, srt_path: Optional[Path] = None) -> Optional[Path]:
-        out_path = self.work_dir / f"{srt_path.stem}_voice.wav" if srt_path else self.work_dir / "voice_ref.wav"
+    def extract_voice_ref(self, audio_path: Path, duration_sec: int = 10, srt_path: Optional[Path] = None, max_search_sec: int = 600) -> Optional[Path]:
+        """
+        Extract a voice reference segment from the original audio.
+        Uses Strategy 1 (SRT-based) or Strategy 2 (Scanning) to find a high-energy window.
+        Memory protection: Loads chunks via soundfile instead of full librosa.load.
+        """
+        # Centralized naming: style_ref.wav
+        out_path = self.work_dir / FILENAME_STYLE_REF
         if out_path.exists() and out_path.stat().st_size > 0:
-             logging.info(f">> 缓存命中: {out_path}")
+             logging.info(f">> 缓存命中: {out_path.name}")
              return out_path
 
-        # logging.info(f"Extracting voice reference...")
         try:
-            import librosa
             import soundfile as sf
             import numpy as np
         except ImportError:
-            logging.error("Missing audio analysis libs. Run 'uv pip install librosa soundfile'")
+            logging.error("Missing audio analysis libs. Run 'uv pip install soundfile numpy'")
             return None
         
         y = None
         sr = 44100 
         
-        def load_chunk(start_sec, dur_sec):
-            with sf.SoundFile(str(audio_path)) as f:
-                f.seek(max(0, int(start_sec * f.samplerate)))
-                frames_to_read = int(dur_sec * f.samplerate)
-                if frames_to_read > (f.frames - f.tell()):
-                    frames_to_read = f.frames - f.tell()
-                data = f.read(frames_to_read)
-                if len(data.shape) > 1:
-                    data = data.mean(axis=1)
-                return data, f.samplerate
+        def load_chunk_safe(start_sec, dur_sec):
+            try:
+                with sf.SoundFile(str(audio_path)) as f:
+                    start_frame = max(0, int(start_sec * f.samplerate))
+                    if start_frame >= f.frames:
+                        return None, f.samplerate
+                    f.seek(start_frame)
+                    frames_to_read = int(dur_sec * f.samplerate)
+                    if frames_to_read > (f.frames - f.tell()):
+                        frames_to_read = f.frames - f.tell()
+                    if frames_to_read <= 0:
+                        return None, f.samplerate
+                    data = f.read(frames_to_read)
+                    if len(data.shape) > 1:
+                        data = data.mean(axis=1) # Mono
+                    return data, f.samplerate
+            except Exception as e:
+                logging.warning(f"Chunk load error at {start_sec}s: {e}")
+                return None, 44100
 
-        # Strategy 1: Use SRT to find a segment with confirmed speech
+        # Strategy 1: Use SRT to find a middle-ish segment with confirmed speech
         if srt_path and srt_path.exists():
             try:
                 import pysrt
                 subs = pysrt.open(str(srt_path))
                 if len(subs) > 0:
+                    # Pick a segment around 1/4 into the video to avoid intros/commercials
                     idx = min(len(subs) // 4, 10) 
                     start_time = subs[idx].start.ordinal / 1000.0
-                    # logging.info(f"Loading partial audio from {start_time}s based on SRT...")
-                    try:
-                        # Load 30s to have some buffer to find the best window
-                        y, sr = load_chunk(start_time, duration_sec * 3)
-                    except Exception as e:
-                        logging.warning(f"Failed to load chunk: {e}")
+                    # Load a 30s chunk to search the best window within it
+                    y, sr = load_chunk_safe(start_time, duration_sec * 3)
             except Exception as e:
-                logging.warning(f"Error using SRT: {e}")
+                logging.warning(f"Error using SRT for voice ref: {e}")
 
-        # Strategy 2: If no data yet, load start of file
+        # Strategy 2: Scan the first 10 minutes (max_search_sec) to find best segment
         if y is None or len(y) == 0:
-             logging.info("Loading first 2 minutes of audio for voice ref search...")
-             try:
-                 y, sr = load_chunk(0, 120)
-             except Exception:
-                 # Fallback to full load if sf fails (e.g. format issues)
-                 y, sr = librosa.load(str(audio_path), sr=None)
+             logging.info(f"Scanning first {max_search_sec}s of audio for voice ref...")
+             y, sr = load_chunk_safe(0, max_search_sec)
 
         if y is None or len(y) == 0:
-             logging.error("Failed to load any audio.")
+             logging.error("Failed to load any audio for voice reference.")
              return None
 
-        # Extract best window from loaded audio 'y'
+        # Extract best window from loaded memory-safe chunk 'y'
         samples_per_window = int(duration_sec * sr)
         if len(y) < samples_per_window:
             samples_per_window = len(y)
             
         best_start = 0
         max_rms = -1.0
-        step = int(1.0 * sr) # Step 1s
+        step = int(2.0 * sr) # Step 2s for faster analysis
         
         search_range = range(0, len(y) - samples_per_window, step)
-        for start in tqdm(search_range, desc="正在分析最佳音色切片", unit="win", disable=not self.verbose):
+        for start in tqdm(search_range, desc="分析最佳音色切片", unit="win", disable=not self.verbose):
             window = y[start : start + samples_per_window]
             rms = np.sqrt(np.mean(window**2))
-            # Prefer loud but not clipping segments
+            # Prefer loud but not clipping (distorted) segments
             if rms > max_rms and rms < 0.5: 
                 max_rms = rms
                 best_start = start
                 
         # Save the best segment
         best_segment = y[best_start : best_start + samples_per_window]
-        out_path = self.work_dir / f"{srt_path.stem}_voice.wav"
         sf.write(str(out_path), best_segment, sr)
         
-        logging.info(f">> 音色提取成功")
+        logging.info(f">> 音色提取成功: {out_path.name}")
         return out_path
 
 

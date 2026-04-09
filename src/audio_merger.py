@@ -9,8 +9,9 @@ import json
 import os
 import wave
 import shutil
-import subprocess
+import logging
 from pathlib import Path
+import subprocess
 
 
 def resolve_path(path, base):
@@ -84,6 +85,33 @@ def merge_segments(manifest, out_path, pad_gaps=False, workspace_root=None):
     print(f'Merged {len(frames_list)} chunks -> {out_path}')
 
 
+def ensure_safe_srt_for_ffmpeg(srt_path: str, work_dir: str = "work") -> str:
+    """
+    Ensure SRT path is safe for FFmpeg filter usage.
+    If path contains special characters (spaces, quotes, etc), copy to a safe location.
+    Returns the path formatted for use inside an FFmpeg filter string:
+    - Forward slashes (backslashes converted via as_posix)
+    - Windows drive letter colon escaped as \\: (e.g. C\\:/path/file.srt)
+    """
+    srt_p = Path(srt_path).resolve()
+
+    # Check for characters that are problematic in FFmpeg filter strings.
+    # Backslashes are NOT listed here — they are handled later via as_posix().
+    problematic_chars = ["'", '"', ' ', '&', '|', '<', '>', '(', ')', '[', ']', '{', '}', ';', '`', '$']
+    has_problematic = any(char in str(srt_p) for char in problematic_chars)
+
+    if has_problematic:
+        logging.info("FFmpeg: Detected special characters in subtitle path. Using safe copy in work directory.")
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+        safe_srt = Path(work_dir) / "ffmpeg_safe_subtitles.srt"
+        shutil.copy(str(srt_p), str(safe_srt))
+        srt_p = safe_srt.resolve()
+
+    # Convert to POSIX forward slashes and escape the Windows drive-letter colon.
+    # FFmpeg filter syntax requires:  C\:/path/to/file.srt
+    return srt_p.as_posix().replace(":", "\\:")
+
+
 def ffmpeg_available():
     try:
         subprocess.run(['ffmpeg', '-version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
@@ -92,9 +120,18 @@ def ffmpeg_available():
         return False
 
 
-def merge_video_with_audio_and_subs(video_in, audio_in, subs_path, output_video, burn_subs=False, audio_bitrate='192k'):
+def merge_video_with_audio_and_subs(video_in, audio_in, subs_path, output_video, burn_subs=False, audio_bitrate='192k', work_dir='work'):
     """
     Replace original video audio with merged WAV and attach/burn subtitles.
+    
+    Args:
+        video_in: Input video path
+        audio_in: Input audio (WAV) path
+        subs_path: Subtitles (SRT) path
+        output_video: Output video path
+        burn_subs: Whether to burn subtitles into video
+        audio_bitrate: Audio bitrate (default: 192k)
+        work_dir: Working directory for temporary files
     """
     if not ffmpeg_available():
         raise RuntimeError('ffmpeg not found in PATH.')
@@ -111,18 +148,20 @@ def merge_video_with_audio_and_subs(video_in, audio_in, subs_path, output_video,
     cmd = []
     if burn_subs:
         if not os.path.exists(subs_path):
-            raise FileNotFoundError(f'Subtitles file not found: {subs_path}')
-        # Cross-platform: ffmpeg subtitles filter requires forward slashes even on Windows
-        path_for_ffmpeg = str(Path(subs_path).as_posix()).replace(":", "\\:") 
+            raise FileNotFoundError(f"Subtitles file not found: {subs_path}")
+        
+        # Use safe FFmpeg path handling
+        safe_srt_path = ensure_safe_srt_for_ffmpeg(subs_path, work_dir=work_dir)
+        
         cmd = [
-            'ffmpeg', '-y',
-            '-i', video_in,
-            '-i', audio_in,
-            '-filter_complex', f"subtitles='{path_for_ffmpeg}'",
-            '-map', '0:v:0', '-map', '1:a:0',
-            '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
-            '-c:a', 'aac', '-b:a', audio_bitrate,
-            '-shortest',
+            "ffmpeg", "-y",
+            "-i", video_in,
+            "-i", audio_in,
+            "-filter_complex", f"subtitles='{safe_srt_path}'",
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+            "-c:a", "aac", "-b:a", audio_bitrate,
+            "-shortest", "-movflags", "+faststart",
             output_video
         ]
     else:

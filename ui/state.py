@@ -21,8 +21,11 @@ class UILogHandler(logging.Handler):
             pass
 
 
+from src.config import DEFAULT_WORK_DIR
+
 @dataclass
 class AppState:
+    state_version: int = 2
     processing: bool = False
     synthesizing: bool = False
     step: int = 1
@@ -31,7 +34,7 @@ class AppState:
     log_tail: int = 300
 
     url_or_path: str = ""
-    work_dir: str = "work"
+    work_dir: str = DEFAULT_WORK_DIR
     whisper_model: str = "small"
     lang: str = "zh"
     emo_text: str = ""
@@ -42,6 +45,14 @@ class AppState:
     segment_current: int = 0
     segment_total: int = 0
     cancel_event: Event = field(default_factory=Event, repr=False)
+    
+    # Advanced parameters for TTS synthesis
+    speed: float = 1.0
+    sample_rate: int = 44100
+    gain_db: float = -1.5
+    tokens_per_sec: float = 150.0
+    emo_alpha: float = 0.8
+    max_retries: int = 3
 
     video_data: dict[str, Any] | None = None
     srt_entries: list[dict[str, Any]] = field(default_factory=list)
@@ -108,6 +119,7 @@ class AppState:
         """Convert current application state to a serializable dictionary."""
         with self._lock:
             return {
+                "version": self.state_version,
                 "url_or_path": self.url_or_path,
                 "work_dir": self.work_dir,
                 "whisper_model": self.whisper_model,
@@ -116,13 +128,24 @@ class AppState:
                 "diffusion_steps": self.diffusion_steps,
                 "burn_subs": self.burn_subs,
                 "force_regen": self.force_regen,
+                "output_video": self.output_video,
+                "segment_current": self.segment_current,
+                "segment_total": self.segment_total,
                 "video_data": self.video_data,
                 "srt_path": str(self.srt_path) if self.srt_path else None,
+                "logs": self.logs,
             }
 
     def from_dict(self, data: dict[str, Any]) -> None:
-        """Update state from a dictionary."""
+        """Update state from a dictionary. Handles version migration."""
         with self._lock:
+            # Check version and apply migrations if needed
+            saved_version = int(data.get("version", 1))
+            if saved_version < self.state_version:
+                # Apply migration logic for older versions
+                data = self._migrate_state(data, saved_version, self.state_version)
+            
+            self.state_version = int(data.get("version", self.state_version))
             self.url_or_path = data.get("url_or_path", "")
             self.work_dir = data.get("work_dir", "work")
             self.whisper_model = data.get("whisper_model", "small")
@@ -131,6 +154,9 @@ class AppState:
             self.diffusion_steps = data.get("diffusion_steps", 25)
             self.burn_subs = data.get("burn_subs", False)
             self.force_regen = data.get("force_regen", False)
+            self.output_video = data.get("output_video", "")
+            self.segment_current = data.get("segment_current", 0)
+            self.segment_total = data.get("segment_total", 0)
             self.video_data = data.get("video_data")
             srt_path_str = data.get("srt_path")
             self.srt_path = Path(srt_path_str) if srt_path_str else None
@@ -138,6 +164,78 @@ class AppState:
             if self.srt_path and self.srt_path.exists():
                 self.step = 2
                 self.progress = 0.6
+            
+            # Restore logs if present
+            self.logs = data.get("logs", [])
+            if self.logs:
+                # Re-infer progress from the last log line to be safe
+                self._infer_progress_from_log(self.logs[-1])
+
+    @staticmethod
+    def _migrate_state(data: dict[str, Any], from_version: int, to_version: int) -> dict[str, Any]:
+        """Migrate state from older versions to current version."""
+        # Version 1 to 2: Added burn_subs, force_regen, output_video fields
+        if from_version < 2:
+            if "burn_subs" not in data:
+                data["burn_subs"] = False
+            if "force_regen" not in data:
+                data["force_regen"] = False
+            if "output_video" not in data:
+                data["output_video"] = ""
+        
+        data["version"] = to_version
+        return data
+
+    def clear_invalid_paths(self) -> list[str]:
+        """Clear restored file references that no longer exist on disk. Returns list of cleared fields."""
+        cleared = []
+        with self._lock:
+            # Check SRT path
+            if self.srt_path and not self.srt_path.exists():
+                logging.warning(f"SRT file no longer exists: {self.srt_path}")
+                self.srt_path = None
+                self.srt_entries = []
+                self.video_data = None
+                self.step = 1
+                self.progress = 0.0
+                cleared.append("srt_path")
+                return cleared  # Early return to reset state
+
+            # Check video_data paths
+            if isinstance(self.video_data, dict):
+                for key in ("video", "audio", "srt", "voice_ref"):
+                    value = self.video_data.get(key)
+                    if value and not Path(str(value)).exists():
+                        logging.warning(f"Video artifact '{key}' no longer exists: {value}")
+                        # Clear all video data if any critical file is missing
+                        self.video_data = None
+                        self.srt_entries = []
+                        self.step = 1
+                        self.progress = 0.0
+                        cleared.append(f"video_data.{key}")
+                        break
+            
+            # Check output_video path if set
+            if self.output_video:
+                output_path = Path(str(self.output_video))
+                if not output_path.parent.exists():
+                    logging.warning(f"Output directory no longer exists: {output_path.parent}")
+                    self.output_video = ""
+                    cleared.append("output_video")
+            
+            # Check work_dir exists
+            if self.work_dir:
+                work_path = Path(self.work_dir)
+                if not work_path.exists():
+                    logging.warning(f"Work directory no longer exists: {work_path}")
+                    # Don't clear work_dir, but reset progress
+                    self.step = 1
+                    self.progress = 0.0
+                    self.srt_entries = []
+                    self.video_data = None
+                    cleared.append("work_dir (reset progress)")
+        
+        return cleared
 
     def push_srt_history(self) -> None:
         """Push a deep copy of current srt_entries to history stack."""
@@ -155,4 +253,3 @@ class AppState:
                 return False
             self.srt_entries = self.srt_history.pop()
             return True
-            self.segment_total = 0

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 # Core Modules
-from src.config import Config, get_logging_config, setup_environment
+from src.config import Config, get_logging_config, setup_environment, FILENAME_MERGED_AUDIO
 from src.resource_manager import ResourceManager
 from src.tts.model_manager import TTSModelManager
 from src.tts.audio_pipeline import stitch_segments_from_manifest, mux_audio_video
@@ -65,16 +65,41 @@ def run_tts_generation(args):
     start_time = time.time()
     manifest, err_code = synthesizer.synthesize(entries)
     
+    if err_code == 130:
+        # User cancelled
+        logging.warning("TTS 任务已由用户取消。")
+        return 130
+    
     if not manifest:
         logging.error("没有生成任何语音片段。")
         return 1
+    
+    # Check if we have any valid (non-failed) segments
+    valid_segments = [m for m in manifest if not m.get("failed", False)]
+    failed_segments = [m for m in manifest if m.get("failed", False)]
+    
+    if failed_segments and not valid_segments:
+        # All failed
+        logging.error(f"TTS 合成全部失败。失败片段数: {len(failed_segments)}")
+        return 1
+    
+    if failed_segments:
+        # Partial failure - log details
+        logging.warning(f"TTS 合成部分完成。成功: {len(valid_segments)}/{len(manifest)}，失败: {len(failed_segments)}")
+        for fail_entry in failed_segments:
+            logging.warning(f"  - 片段 {fail_entry.get('id', '?')}: {fail_entry.get('error_reason', 'unknown error')}")
+        logging.info(">> 继续使用已生成的片段进行后续处理...")
 
     # 5. Manifest Saving & Final Audio Processing
-    synthesizer.save_manifest(manifest, config.out_dir)
+    # (synthesize already saves manifest incrementally and at the end)
     
     if config.stitch or config.video or config.output_video:
-        final_audio = stitch_segments_from_manifest(manifest, config.sample_rate, config.gain_db)
-        final_audio_path = res_manager.get_output_path("merged_audio.wav")
+        if not valid_segments:
+            logging.error("没有有效的语音片段可用于拼接。")
+            return 1
+            
+        final_audio = stitch_segments_from_manifest(manifest, config.sample_rate, config.gain_db, manifest_dir=config.out_dir)
+        final_audio_path = config.work_dir / FILENAME_MERGED_AUDIO
         # Ensure parent exists
         final_audio_path.parent.mkdir(parents=True, exist_ok=True)
         final_audio.export(str(final_audio_path), format="wav")
@@ -86,8 +111,7 @@ def run_tts_generation(args):
             output_vid = config.output_video if config.output_video else default_vid_out
             try:
                 # Pass srt_path if burn_subs is enabled
-                burn_subs = getattr(args, "burn_subs", False)
-                mux_audio_video(video_src, final_audio_path, output_vid, srt_path=srt_path if burn_subs else None)
+                mux_audio_video(video_src, final_audio_path, output_vid, srt_path=srt_path if config.burn_subs else None)
                 logging.info(f">> 成功合并音频到视频: {output_vid}")
             except RuntimeError:
                 return 1
@@ -114,6 +138,7 @@ def main() -> int:
     parser.add_argument("--sample_rate", type=int, default=44100)
     parser.add_argument("--gain_db", type=float, default=-1.5)
     parser.add_argument("--diffusion_steps", type=int, default=25)
+    parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for transient TTS inference failures")
     parser.add_argument("--video", default="")
     parser.add_argument("--output_video", default="")
     parser.add_argument("--burn-subs", action="store_true", help="Burn subtitles into output video (top-center alignment)")

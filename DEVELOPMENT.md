@@ -7,6 +7,7 @@
 - 在本地完成“视频 → 转写 → 配音 → 合流”的闭环流程。
 - 对长耗时任务保持可中断、可恢复。
 - 尽量保证 Windows / Linux 行为一致。
+- **文档维护约束**：严禁在根目录创建新的 `.md` 文件。所有更新必须集成至现有的 5 个核心文档（README, DEVELOPMENT, PROJECT_STATUS, TEST_COVERAGE, TROUBLESHOOTING）。
 
 ---
 
@@ -35,13 +36,13 @@
    - 下载/定位视频
    - 提取 WAV 音频
    - faster-whisper 转写 SRT
-   - 选取参考音 `*_voice.wav`
+   - 选取参考音 `style_ref.wav`
 3. 用户编辑 SRT（CLI 打开外部编辑器 / GUI 内嵌编辑）。
 4. `src/tts_generator.py`
    - 解析 SRT
    - 按句推理 TTS
    - 对齐到目标时长
-   - 写出 `manifest.json`
+   - 写出 `segments.json` (清单文件)
 5. `src/tts/audio_pipeline.py`
    - 根据清单拼接整轨音频
    - 使用 ffmpeg 合流到视频
@@ -186,4 +187,72 @@ D:/Coding/Python/VoiceEditor/.venv/Scripts/python.exe -c "from pathlib import Pa
 
 ---
 
-*Last Updated: 2026-03-04*
+## 12) AI 执行规范（自动化开发指南）
+
+### 修改前检查清单
+
+在做任何代码变更前，必须确认：
+
+- [ ] 问题明确定义（功能、条件、期望输出）
+- [ ] 影响范围已评估（涉及的模块和入口）
+- [ ] 约束条件已理解（跨平台、性能、向后兼容）
+- [ ] 现有测试已审查（是否有冲突或需要更新）
+- [ ] 验证方式已明确（如何证明修复有效）
+
+### 修改后验证清单（必须执行）
+
+```bash
+# 1. 语法检查
+python -m py_compile src/modified_module.py
+
+# 2. 导入测试
+python -c "import src.modified_module; print('OK')"
+
+# 3. 相关单元测试
+uv run pytest tests/test_related.py -xvs
+
+# 4. 帮助文本和基本功能
+uv run python main.py --help
+uv run python main_gui.py --help
+```
+
+### 约束条件
+
+**不允许的修改**:
+- ❌ 改变 public API（函数签名、返回值类型）
+- ❌ 删除已存在的参数或配置字段
+- ❌ 直接修改 `index-tts/` 子模块
+- ❌ 引入新的外部依赖（需先审查）
+- ❌ 无相关测试的大规模重构
+
+**允许的修改**:
+- ✅ 添加内部函数或 private 方法
+- ✅ 增加参数的默认值处理
+- ✅ 完善错误处理和日志
+- ✅ 添加测试用例
+- ✅ 修改非 public 方法的实现
+
+### 常见错误排除
+
+| 错误 | 原因 | 排除步骤 |
+|------|------|---------|
+| `ModuleNotFoundError` | 缺少依赖 | 运行 `uv sync` 重新安装 |
+| `FileNotFoundError` | 路径错误 | 检查 `Path()` 和平台差异 |
+| `CUDA out of memory` | GPU 显存不足 | 降低参数或使用 CPU 模式 |
+| `subprocess error` | FFmpeg 缺失 | 安装 FFmpeg 或检查 PATH |
+| 测试失败 | 代码逻辑错误 | 运行 `pytest -xvs` 查看详细输出 |
+
+### 任务优先级评估
+
+按以下优先级处理问题：
+
+1. **关键问题** (阻断功能发布) → 立即处理
+2. **高优先级** (影响稳定性) → 本周处理  
+3. **中优先级** (改善体验) → 本月处理
+4. **低优先级** (优化) → 后续处理
+
+详见 [CODE_REVIEW_STATUS.md](CODE_REVIEW_STATUS.md) 了解当前状态。
+
+---
+
+*Last Updated: 2026-04-09*
