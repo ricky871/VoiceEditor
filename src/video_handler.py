@@ -79,18 +79,59 @@ class VideoEngine:
              return video_path, duration
 
     def extract_audio(self, video_path: Path) -> Optional[Path]:
+        raw_audio_path = video_path.with_suffix(".raw.wav")
         audio_path = video_path.with_suffix(".wav")
+        
         if audio_path.exists() and audio_path.stat().st_size > 0:
             return audio_path
 
-        # logging.info(f"Extracting audio...")
-        
-        cmd = [
+        # Step 1: Extract original audio
+        cmd_extract = [
             "ffmpeg", "-y", "-i", str(video_path),
-            "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1",
+            "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+            str(raw_audio_path)
+        ]
+        success, _ = self._run_cmd(cmd_extract, "ffmpeg raw extraction")
+        if not success: return None
+
+        # Step 2: Use Demucs for advanced Vocal/BGM separation
+        logging.info(">> 启动进阶分离方案: 正在使用 Demucs 剥离背景音乐 (BGM)...")
+        try:
+            # We run via subprocess to ensure it uses the current env
+            demucs_cmd = [
+                sys.executable, "-m", "demucs.separate",
+                "-n", "htdemucs",
+                "--two-stems", "vocals",
+                "-o", str(self.work_dir / "separated"),
+                str(raw_audio_path)
+            ]
+            sep_success, _ = self._run_cmd(demucs_cmd, "Demucs vocal separation")
+            
+            # Demucs creates: separated/htdemucs/{filename}/vocals.wav
+            vocal_src = self.work_dir / "separated" / "htdemucs" / raw_audio_path.stem / "vocals.wav"
+            
+            if sep_success and vocal_src.exists():
+                # Step 3: Final normalization and conversion for Whisper
+                cmd_final = [
+                    "ffmpeg", "-y", "-i", str(vocal_src),
+                    "-af", "highpass=f=100,lowpass=f=6000,afftdn=nf=-25",
+                    "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                    str(audio_path)
+                ]
+                self._run_cmd(cmd_final, "final audio conditioning")
+                logging.info(">> 进阶人声提取完成。")
+                return audio_path
+        except Exception as e:
+            logging.warning(f"Demucs 进阶分离失败 ({e})，回退到基础滤镜方案。")
+
+        # Fallback to basic filters if Demucs fails
+        cmd_fallback = [
+            "ffmpeg", "-y", "-i", str(raw_audio_path),
+            "-af", "highpass=f=100,lowpass=f=6000,afftdn=nf=-25,anequalizer=c0 f=1000 w=200 g=3 t=1",
+            "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
             str(audio_path)
         ]
-        success, _ = self._run_cmd(cmd, "ffmpeg extraction")
+        success, _ = self._run_cmd(cmd_fallback, "ffmpeg extraction")
         return audio_path if success else None
 
     def _format_timestamp(self, seconds: float) -> str:
@@ -126,12 +167,15 @@ class VideoEngine:
         try:
             model = WhisperModel(model_size, device=device, compute_type=compute_type)
             # info contains basic info about the audio and language
-            # initial_prompt helps Nudge Whisper to use Simplified Chinese
+            # vad_filter: Pre-filter audio for voice activity detection. 
+            # vad_parameters: suppress silence and potentially music segments.
             segments, info = model.transcribe(
                 str(audio_path), 
                 language=lang, 
                 beam_size=5,
-                initial_prompt="以下是普通话的句子，请使用简体中文。"
+                initial_prompt="以下是普通话的句子，请使用简体中文。",
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=600, speech_pad_ms=200)
             )
             
             final_srt_path = audio_path.with_suffix(".srt")
