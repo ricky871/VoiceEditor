@@ -6,7 +6,8 @@ echo "Starting VoiceEditor Linux Installation..."
 # 1. Update system and install dependencies
 echo "Installing system dependencies (sudo required)..."
 sudo apt-get update
-sudo apt-get install -y curl git ffmpeg python3 python3-pip python3-venv
+# Added fonts-noto-cjk to support Chinese characters in FFmpeg/Subtitles
+sudo apt-get install -y curl git ffmpeg python3 python3-pip python3-venv fonts-noto-cjk
 
 # 2. Install UV (Standalone installer)
 if ! command -v uv &> /dev/null

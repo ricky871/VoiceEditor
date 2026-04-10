@@ -14,8 +14,14 @@ from pathlib import Path
 import subprocess
 
 
+def is_windows_absolute(path: str) -> bool:
+    """Check if path is a Windows absolute path (e.g. C:\\...) even on Linux."""
+    import re
+    return bool(re.match(r'^[a-zA-Z]:\\', path)) or bool(re.match(r'^[a-zA-Z]:/', path))
+
+
 def resolve_path(path, base):
-    if os.path.isabs(path):
+    if os.path.isabs(path) or is_windows_absolute(path):
         return path
     return os.path.normpath(os.path.join(base, path))
 

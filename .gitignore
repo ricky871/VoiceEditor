@@ -28,6 +28,8 @@ ENV/
 
 # Project Specific
 .cache/
+configs/
+scripts/remote_tester.py
 checkpoints/
 !checkpoints/config.yaml
 !checkpoints/configuration.json

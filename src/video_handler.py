@@ -49,6 +49,8 @@ class VideoEngine:
             'outtmpl': str(self.work_dir / '%(title)s.%(ext)s'),
             'restrictfilenames': True,
             'nocheckcertificate': True,
+            'referer': 'https://www.bilibili.com',
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'retries': 10,
             'fragment_retries': 10,
             'retry_sleep_functions': {'http': lambda n: 5 * (n + 1)},

@@ -75,7 +75,42 @@
 
 ---
 
-## 5) 关键数据结构
+## 6) 远程测试与同步 (Remote Testing)
+
+为了在不同操作系统（如 Debian 12）上验证功能，项目提供了一个自动化同步与远程执行工具 `scripts/remote_tester.py`。
+
+### 核心功能
+- **增量同步**：基于 SFTP 比较文件大小和修改时间，仅上传变更文件。
+- **环境隔离**：远程执行 `install.sh` 以确保依赖一致。
+- **远程测试**：在远程主机上运行 `pytest` 并将结果回传。
+
+### 使用方法
+1. **配置**：在 `configs/remote_hosts.yaml` 中添加主机信息（该文件已加入 `.gitignore`）。
+   ```yaml
+   hosts:
+     - name: ricky
+       ip: 10.245.54.160
+       user: ricky
+       ssh_key: "C:/path/to/id_ed25519"
+       password: "your_password"
+       remote_dir: "/home/ricky/VoiceEditor"
+   ```
+2. **连接检查**：
+   ```bash
+   uv run scripts/remote_tester.py --check
+   ```
+3. **同步并执行测试**：
+   ```bash
+   uv run scripts/remote_tester.py --sync --test
+   ```
+
+### 注意事项
+- 默认排除 `.git`, `.venv`, `__pycache__`, `work`, `outputs` 等目录。
+- 首次同步 `checkpoints/` 可能较慢，后续同步为增量模式。
+
+---
+
+## 7) 关键数据结构
 
 ### `video_data`（视频处理输出）
 
