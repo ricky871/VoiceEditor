@@ -21,7 +21,7 @@ WebSocket connection to 'ws://<host>:8196/_nicegui_ws/socket.io/...&transport=we
 **原因**:
 1. 旧版本 GUI 主按钮通过同步 lambda 返回 coroutine，远端点击时可能根本没有把 async 流程调度起来
 2. `AppState` 旧实现会在持锁期间写 warning，UILogHandler 回流时可能造成页面假死
-3. 远端 systemd 服务如果走 WebSocket 优先，在某些链路上会反复出现升级失败；更稳妥的是 polling-first
+3. 远端 systemd 服务如果允许 websocket upgrade，在某些链路上会反复出现升级失败；当前默认改为 polling-only
 4. 旧版页面使用 `ui.timer(...)` 刷日志/状态，页面销毁或重连时可能报 `The parent slot of the element has been deleted`
 
 **解决方案**:
@@ -32,14 +32,14 @@ WebSocket connection to 'ws://<host>:8196/_nicegui_ws/socket.io/...&transport=we
    uv run python scripts/remote_sync.py --exec "bash deploy_service.sh"
    ```
 
-2. **检查远端服务是否按 polling-first 启动**
+2. **检查远端服务是否按 polling-only 启动**
    ```bash
    uv run python scripts/remote_sync.py --exec "journalctl -u voiceeditor -n 20 --no-pager"
    ```
    期望看到:
    ```text
    Starting VoiceEditor GUI on http://10.245.54.160:8196 (bind: http://0.0.0.0:8196)
-   Socket.IO transports: polling, websocket
+   Socket.IO transports: polling
    ```
 
 3. **确认 systemd 环境变量已写入**
@@ -48,13 +48,13 @@ WebSocket connection to 'ws://<host>:8196/_nicegui_ws/socket.io/...&transport=we
    ```
    重点检查:
    - `VOICEEDITOR_GUI_PUBLIC_HOST=<远端 IP>`
-   - `VOICEEDITOR_GUI_SOCKET_IO_TRANSPORTS=polling,websocket`
+   - `VOICEEDITOR_GUI_SOCKET_IO_TRANSPORTS=polling`
    - `VOICEEDITOR_GUI_RECONNECT_TIMEOUT=60`
 
 4. **如果浏览器仍报 websocket failed，但页面仍可用**
-   - 这在 polling-first 模式下不一定表示服务不可用
-   - 继续直接测试按钮是否触发日志和进度更新
-   - 只有在按钮无响应时，才继续追查 transport 或代理层
+   - 先确认服务是否真的已经重载到 `VOICEEDITOR_GUI_SOCKET_IO_TRANSPORTS=polling`
+   - 如果仍不是 polling-only，重新部署 systemd 模板
+   - 如果已经是 polling-only 但仍报 websocket，说明浏览器加载的是旧页面资源，先强制刷新再复测
 
 5. **如果日志出现 parent-slot deleted**
    ```text

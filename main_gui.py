@@ -994,6 +994,12 @@ def parse_runtime_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=float(os.environ.get("VOICEEDITOR_GUI_BINDING_REFRESH_INTERVAL", "0.5")),
     )
+    parser.add_argument(
+        "--allow-port-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=os.environ.get("VOICEEDITOR_GUI_ALLOW_PORT_FALLBACK", "1").lower() not in {"0", "false", "no"},
+        help="Allow switching to another free port if the requested port is unavailable.",
+    )
     runtime_args = parser.parse_args(argv)
     try:
         runtime_args.socket_io_transports = parse_socket_io_transports(runtime_args.socket_io_transports)
@@ -1018,10 +1024,11 @@ def find_free_port(start_port: int, max_port: int = 65535) -> int:
 if __name__ in {"__main__", "__mp_main__"}:
     runtime_args = parse_runtime_args()
 
-    # Find a free port if the specified one is busy
-    final_port = find_free_port(runtime_args.port)
-    if final_port != runtime_args.port:
-        print(f"Port {runtime_args.port} is busy. Using available port {final_port} instead.")
+    final_port = runtime_args.port
+    if runtime_args.allow_port_fallback:
+        final_port = find_free_port(runtime_args.port)
+        if final_port != runtime_args.port:
+            print(f"Port {runtime_args.port} is busy. Using available port {final_port} instead.")
 
     app.config.socket_io_js_transports = runtime_args.socket_io_transports
     public_url = resolve_public_base_url(runtime_args, final_port)

@@ -69,7 +69,7 @@ uv run pytest tests/test_ui_state.py tests/test_main_gui.py
 ### 覆盖价值
 - 补上了 `main_gui.py` 之前完全缺失的按钮回调/运行时参数回归面
 - 明确保护了远端 GUI 最脆弱的两条路径: 事件调度和日志锁安全
-- 为 systemd 远端部署增加了 transport 顺序和 public host 配置的可回归验证点
+- 为 systemd 远端部署增加了 polling-only transport 和 public host 配置的可回归验证点
 
 ---
 

@@ -105,7 +105,7 @@
 
 3. **远端 Socket.IO 运行时配置** ✅
    - `main_gui.py` 新增 public host、transport 顺序、reconnect timeout 配置入口
-   - systemd 服务默认改为 `polling,websocket`，更适合远端主机访问
+   - systemd 服务默认改为 `polling`，避免浏览器 websocket 升级失败噪声
 
 4. **页面级 timer 生命周期修复** ✅
    - 日志/进度刷新器改为后台 timer，并在 client 断开时取消

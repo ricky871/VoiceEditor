@@ -43,9 +43,10 @@ def test_parse_runtime_args_reads_remote_gui_env(monkeypatch):
     monkeypatch.setenv("VOICEEDITOR_GUI_PORT", "8196")
     monkeypatch.setenv("VOICEEDITOR_GUI_PUBLIC_HOST", "10.245.54.160")
     monkeypatch.setenv("VOICEEDITOR_GUI_PUBLIC_PORT", "8196")
-    monkeypatch.setenv("VOICEEDITOR_GUI_SOCKET_IO_TRANSPORTS", "polling,websocket")
+    monkeypatch.setenv("VOICEEDITOR_GUI_SOCKET_IO_TRANSPORTS", "polling")
     monkeypatch.setenv("VOICEEDITOR_GUI_RECONNECT_TIMEOUT", "60")
     monkeypatch.setenv("VOICEEDITOR_GUI_BINDING_REFRESH_INTERVAL", "0.5")
+    monkeypatch.setenv("VOICEEDITOR_GUI_ALLOW_PORT_FALLBACK", "0")
 
     args = main_gui.parse_runtime_args([])
 
@@ -53,9 +54,10 @@ def test_parse_runtime_args_reads_remote_gui_env(monkeypatch):
     assert args.port == 8196
     assert args.public_host == "10.245.54.160"
     assert args.public_port == 8196
-    assert args.socket_io_transports == ["polling", "websocket"]
+    assert args.socket_io_transports == ["polling"]
     assert args.reconnect_timeout == 60.0
     assert args.binding_refresh_interval == 0.5
+    assert args.allow_port_fallback is False
 
 
 def test_parse_runtime_args_rejects_invalid_transport():
@@ -97,3 +99,11 @@ def test_register_disconnect_cleanup_cancels_all_timers():
     client.handler()
 
     assert all(timer.cancelled for timer in timers)
+
+
+def test_parse_runtime_args_allows_port_fallback_by_default(monkeypatch):
+    monkeypatch.delenv("VOICEEDITOR_GUI_ALLOW_PORT_FALLBACK", raising=False)
+
+    args = main_gui.parse_runtime_args([])
+
+    assert args.allow_port_fallback is True
