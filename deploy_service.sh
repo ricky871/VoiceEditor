@@ -40,6 +40,13 @@ echo "Deploy user: $USER_NAME"
 echo "Using home: $HOME_PATH"
 echo "Using 'uv' at: $UV_PATH"
 
+PUBLIC_HOST=${VOICEEDITOR_GUI_PUBLIC_HOST:-$(hostname -I | awk '{print $1}')}
+if [ -z "$PUBLIC_HOST" ]; then
+    PUBLIC_HOST="127.0.0.1"
+fi
+
+echo "Using public host: $PUBLIC_HOST"
+
 # --- Handle uninstallation ---
 if [ "$1" == "uninstall" ]; then
     echo "Uninstalling VoiceEditor systemd service..."
@@ -61,6 +68,7 @@ sed -e "s|{{USER}}|$USER_NAME|g" \
     -e "s|{{INSTALL_DIR}}|$INSTALL_DIR|g" \
     -e "s|{{HOME}}|$HOME_PATH|g" \
     -e "s|{{UV_PATH}}|$UV_PATH|g" \
+    -e "s|{{PUBLIC_HOST}}|$PUBLIC_HOST|g" \
     voiceeditor.service.template > $SERVICE_FILE
 
 echo "Created service file: $SERVICE_FILE"
@@ -82,5 +90,5 @@ echo "Deployment Complete!"
 echo "Service status Check: sudo systemctl status $SERVICE_NAME"
 echo "View Service logs: journalctl -u $SERVICE_NAME -f"
 echo "The Web GUI should now be accessible on port 8196."
-echo "Note: If running in background, access via http://$(hostname -I | awk '{print $1}'):8196"
+echo "Note: If running in background, access via http://$PUBLIC_HOST:8196"
 echo "-------------------------------------------------------"

@@ -13,6 +13,13 @@ WorkingDirectory={{INSTALL_DIR}}
 Environment="UV_PYTHON=python3"
 Environment="NICEGUI_HOST=0.0.0.0"
 Environment="NICEGUI_PORT=8196"
+Environment="VOICEEDITOR_GUI_HOST=0.0.0.0"
+Environment="VOICEEDITOR_GUI_PORT=8196"
+Environment="VOICEEDITOR_GUI_PUBLIC_HOST={{PUBLIC_HOST}}"
+Environment="VOICEEDITOR_GUI_PUBLIC_PORT=8196"
+Environment="VOICEEDITOR_GUI_SOCKET_IO_TRANSPORTS=polling,websocket"
+Environment="VOICEEDITOR_GUI_RECONNECT_TIMEOUT=60"
+Environment="VOICEEDITOR_GUI_BINDING_REFRESH_INTERVAL=0.5"
 Environment="PATH={{HOME}}/.local/bin:{{HOME}}/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
 
 # UV will automatically handle the virtual environment sync if needed

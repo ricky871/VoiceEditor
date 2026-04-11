@@ -1,7 +1,7 @@
 # VoiceEditor 项目状态报告
 
-**最新更新**: 2026-04-09 (Code Review & FFmpeg Fix + 211/211 Tests Passing)  
-**状态**: 🟢 生产级 (可靠性: 97% ⬆️ | 覆盖: 50% ✅ | 问题: 0/23 ✅ | 测试: 211/211 ✅)
+**最新更新**: 2026-04-11 (Remote NiceGUI Hardening + Focused GUI Regression Pack)  
+**状态**: 🟢 生产级 (可靠性: 97% ⬆️ | 覆盖: 50% ✅ | 历史问题: 23/23 ✅ | 新增远端 GUI 风险: 已加固 ✅ | 聚焦测试: 13/13 ✅)
 
 ---
 
@@ -94,6 +94,23 @@
    - UI 可折叠"高级参数"部分
    - 6 个新控件 (speed, sample_rate, gain_db, tokens_per_sec, emo_alpha, max_retries)
 
+### 远端 GUI 稳定性加固 (2026-04-11 ✅)
+1. **按钮异步回调调度** ✅
+   - `main_gui.py` 的两个主按钮改为显式 async handler
+   - 避免同步 lambda 返回 coroutine 导致远端点击无效
+
+2. **UI 状态日志锁安全** ✅
+   - `ui/state.py` 中的进度推断和 warning 输出移到锁外
+   - 降低 UILogHandler 回流导致的自递归/冻结风险
+
+3. **远端 Socket.IO 运行时配置** ✅
+   - `main_gui.py` 新增 public host、transport 顺序、reconnect timeout 配置入口
+   - systemd 服务默认改为 `polling,websocket`，更适合远端主机访问
+
+4. **页面级 timer 生命周期修复** ✅
+   - 日志/进度刷新器改为后台 timer，并在 client 断开时取消
+   - 新进程启动日志已不再出现页面级 timer 的 parent-slot 异常
+
 ---
 
 ## 📈 测试覆盖进展
@@ -137,7 +154,7 @@ video_handler:   64 测试, 54% 覆盖  ⬅️ 当前
 
 ## 📝 会话完成度
 
-### 本会话成果 (2026-04-09)
+### 本会话成果 (2026-04-11)
 - ✅ **23/23 问题已解决** (100%)
 - ✅ **3 + 2 + 6 个功能完成** (11 个功能)
 - ✅ **211 个测试通过** (原始 25 → 现在 211, +186 新增) 🎉
@@ -146,6 +163,9 @@ video_handler:   64 测试, 54% 覆盖  ⬅️ 当前
 - ✅ **50% 测试覆盖** (原始 <30% → 50%, +22%)
 - ✅ **可靠性提升至 97%** (96% → 97%, +1%)
 - ✅ **4 个新特性** (故障指南、参数 UI、覆盖改进、video_handler 深化测试)
+- ✅ **远端 GUI 加固完成** (按钮事件、状态锁、Socket.IO transport、timer 生命周期)
+- ✅ **13 个 GUI 聚焦回归测试通过**
+- ✅ **ricky systemd 服务已按新配置重部署**
 
 ### 文件修改统计
 - 源代码文件修改: 11 个
@@ -161,6 +181,9 @@ video_handler:   64 测试, 54% 覆盖  ⬅️ 当前
 - [x] 跨平台兼容性验证
 - [x] 生产级可靠性达成
 - [x] 用户文档完整
+- [x] GUI/状态聚焦回归 13/13 通过
+- [x] 远端 ricky 服务可返回主页面
+- [ ] 浏览器内手工确认远端按钮交互完全恢复
 
 ---
 

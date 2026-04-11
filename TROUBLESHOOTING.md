@@ -1,11 +1,82 @@
 # VoiceEditor 故障排查指南
 
-**最后更新**: 2026-04-09 (Windows FFmpeg 修复 + 211/211 Tests)  
+**最后更新**: 2026-04-11 (Remote NiceGUI Hardening + Timer Lifecycle Fix)  
 **版本**: 基于可靠性 97% 的稳定版本
 
 ---
 
 ## 快速诊断
+
+### 问题: "远端 GUI 只有粘贴 URL 可用" / "WebSocket connection failed"
+
+**症状**:
+```text
+浏览器控制台反复出现:
+WebSocket connection to 'ws://<host>:8196/_nicegui_ws/socket.io/...&transport=websocket' failed
+
+页面能打开，但只有 URL 输入框可用；
+点击“1) 开始处理”或“2) 开始合成”没有反应
+```
+
+**原因**:
+1. 旧版本 GUI 主按钮通过同步 lambda 返回 coroutine，远端点击时可能根本没有把 async 流程调度起来
+2. `AppState` 旧实现会在持锁期间写 warning，UILogHandler 回流时可能造成页面假死
+3. 远端 systemd 服务如果走 WebSocket 优先，在某些链路上会反复出现升级失败；更稳妥的是 polling-first
+4. 旧版页面使用 `ui.timer(...)` 刷日志/状态，页面销毁或重连时可能报 `The parent slot of the element has been deleted`
+
+**解决方案**:
+
+1. **确认已部署 2026-04-11 之后的修复版本**
+   ```bash
+   uv run python scripts/remote_sync.py --sync
+   uv run python scripts/remote_sync.py --exec "bash deploy_service.sh"
+   ```
+
+2. **检查远端服务是否按 polling-first 启动**
+   ```bash
+   uv run python scripts/remote_sync.py --exec "journalctl -u voiceeditor -n 20 --no-pager"
+   ```
+   期望看到:
+   ```text
+   Starting VoiceEditor GUI on http://10.245.54.160:8196 (bind: http://0.0.0.0:8196)
+   Socket.IO transports: polling, websocket
+   ```
+
+3. **确认 systemd 环境变量已写入**
+   ```bash
+   uv run python scripts/remote_sync.py --exec "sudo systemctl cat voiceeditor"
+   ```
+   重点检查:
+   - `VOICEEDITOR_GUI_PUBLIC_HOST=<远端 IP>`
+   - `VOICEEDITOR_GUI_SOCKET_IO_TRANSPORTS=polling,websocket`
+   - `VOICEEDITOR_GUI_RECONNECT_TIMEOUT=60`
+
+4. **如果浏览器仍报 websocket failed，但页面仍可用**
+   - 这在 polling-first 模式下不一定表示服务不可用
+   - 继续直接测试按钮是否触发日志和进度更新
+   - 只有在按钮无响应时，才继续追查 transport 或代理层
+
+5. **如果日志出现 parent-slot deleted**
+   ```text
+   RuntimeError: The parent slot of the element has been deleted.
+   ```
+   说明远端仍在运行旧版本页面级 timer；重新同步并重启服务:
+   ```bash
+   uv run python scripts/remote_sync.py --sync
+   uv run python scripts/remote_sync.py --exec "sudo systemctl restart voiceeditor"
+   ```
+
+**验证命令**:
+```bash
+uv run pytest tests/test_ui_state.py tests/test_main_gui.py
+uv run python scripts/remote_sync.py --exec "sudo systemctl status voiceeditor --no-pager"
+```
+
+**当前已知状态**:
+- 本地聚焦回归: 13/13 通过
+- ricky 上 systemd 服务已按新配置启动
+- 主页面 `http://10.245.54.160:8196` 可正常返回
+- 最后仍需浏览器内手工确认按钮交互完全恢复
 
 ### 问题: "CUDA Out of Memory"
 

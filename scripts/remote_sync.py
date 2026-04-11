@@ -65,41 +65,66 @@ def create_ssh_client(host_info):
 
 def sync_files(host_info):
     local_root = Path.cwd()
-    remote_root = host_info["remote_dir"]
+    remote_root = Path(host_info["remote_dir"])
     
     print(f"[*] Syncing {local_root} to {host_info['ip']}:{remote_root}...")
     
     ssh = create_ssh_client(host_info)
-    # Ensure remote directory exists
-    ssh.exec_command(f"mkdir -p {remote_root}")
+    sftp = ssh.open_sftp()
     
-    with SCPClient(ssh.get_transport()) as scp:
-        for root, dirs, files in os.walk(local_root):
-            # Filter directories
-            dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+    # Ensure remote directory exists
+    ssh.exec_command(f"mkdir -p {remote_root.as_posix()}")
+    
+    files_uploaded = 0
+    files_skipped = 0
+
+    for root, dirs, files in os.walk(local_root):
+        # Filter directories
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        
+        rel_path = Path(root).relative_to(local_root)
+        remote_path = remote_root / rel_path
+        
+        # Create remote directory if it's not the root
+        if rel_path != Path("."):
+            try:
+                sftp.mkdir(remote_path.as_posix())
+            except IOError:
+                pass # Already exists
+        
+        for file in files:
+            if file in IGNORE_FILES:
+                continue
             
-            rel_path = Path(root).relative_to(local_root)
-            remote_path = Path(remote_root) / rel_path
+            local_file = Path(root) / file
+            remote_file_path = remote_path / file
             
-            # Create remote directory if it's not the root
-            if rel_path != Path("."):
-                ssh.exec_command(f"mkdir -p '{remote_path.as_posix()}'")
+            # Incremental check: compare modified time and size
+            local_stat = local_file.stat()
+            should_upload = True
             
-            for file in files:
-                if file in IGNORE_FILES:
-                    continue
-                
-                local_file = Path(root) / file
-                remote_file = remote_path / file
-                
-                # Simple "modified time" check could be added here, 
-                # but SCPClient is generally simple. 
-                # For more efficiency, consider sftp.stat() or rsync.
+            try:
+                remote_stat = sftp.stat(remote_file_path.as_posix())
+                # If size is same and local time is not newer than remote, skip
+                # Note: remote_stat.st_mtime is usually an int
+                if local_stat.st_size == remote_stat.st_size and \
+                   int(local_stat.st_mtime) <= remote_stat.st_mtime:
+                    should_upload = False
+            except FileNotFoundError:
+                pass
+            
+            if should_upload:
                 print(f"  > {rel_path / file}")
-                scp.put(str(local_file), remote_file.as_posix())
+                sftp.put(str(local_file), remote_file_path.as_posix())
+                # Update remote mtime to match local for future checks
+                sftp.utime(remote_file_path.as_posix(), (local_stat.st_atime, local_stat.st_mtime))
+                files_uploaded += 1
+            else:
+                files_skipped += 1
                 
+    sftp.close()
     ssh.close()
-    print("[+] Sync complete.")
+    print(f"[+] Sync complete. ({files_uploaded} uploaded, {files_skipped} skipped)")
 
 def execute_command(host_info, cmd):
     print(f"[*] Executing on {host_info['name']}: {cmd}")

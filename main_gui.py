@@ -17,7 +17,8 @@ from fastapi import HTTPException, Response
 from fastapi.responses import FileResponse, RedirectResponse
 
 import pysrt
-from nicegui import app, run, ui
+from nicegui import app, context, run, ui
+from nicegui.timer import Timer as BackgroundTimer
 
 from src.config import get_device, get_logging_config, patch_tqdm, setup_environment, DEFAULT_WORK_DIR, DIRNAME_SEGMENTS
 from src.tts.processor import SRTProcessor
@@ -79,6 +80,8 @@ setup_environment()
 patch_tqdm(True)
 
 AUDIO_PLAYER_ID = "segment-player"
+ALLOWED_SOCKET_IO_TRANSPORTS = {"websocket", "polling"}
+DEFAULT_SOCKET_IO_TRANSPORTS = ["websocket", "polling"]
 
 root_logger = logging.getLogger()
 if not root_logger.handlers:
@@ -508,6 +511,52 @@ async def start_synthesis(
         status_label.text = compute_status_text()
 
 
+def create_start_processing_handler(
+    url_input: ui.input,
+    work_dir_input: ui.input,
+    whisper_model_select: ui.select,
+    lang_select: ui.select,
+    progress_bar: ui.linear_progress,
+    status_label: ui.label,
+):
+    async def handle_start_processing() -> None:
+        await start_processing(
+            url_input,
+            work_dir_input,
+            whisper_model_select,
+            lang_select,
+            progress_bar,
+            status_label,
+        )
+
+    return handle_start_processing
+
+
+def create_start_synthesis_handler(
+    emo_text_input: ui.input,
+    diffusion_steps_input: ui.number,
+    burn_subs_checkbox: ui.checkbox,
+    force_regen_checkbox: ui.checkbox,
+    output_video_input: ui.input,
+    progress_bar: ui.linear_progress,
+    status_label: ui.label,
+    output_label: ui.label,
+):
+    async def handle_start_synthesis() -> None:
+        await start_synthesis(
+            emo_text_input,
+            diffusion_steps_input,
+            burn_subs_checkbox,
+            force_regen_checkbox,
+            output_video_input,
+            progress_bar,
+            status_label,
+            output_label,
+        )
+
+    return handle_start_synthesis
+
+
 def open_work_folder(work_dir_input: ui.input) -> None:
     target = resolve_work_dir_target(work_dir_input)
     target.mkdir(parents=True, exist_ok=True)
@@ -604,6 +653,46 @@ def compute_status_text() -> str:
         return "已完成，可打开工作目录"
 
     return "等待开始"
+
+
+def parse_socket_io_transports(value: str | list[str] | None) -> list[str]:
+    if value is None:
+        return DEFAULT_SOCKET_IO_TRANSPORTS.copy()
+
+    items = value if isinstance(value, list) else value.split(",")
+    transports: list[str] = []
+    for item in items:
+        transport = str(item).strip().lower()
+        if not transport:
+            continue
+        if transport not in ALLOWED_SOCKET_IO_TRANSPORTS:
+            allowed = ", ".join(sorted(ALLOWED_SOCKET_IO_TRANSPORTS))
+            raise ValueError(f"Unsupported Socket.IO transport '{transport}'. Allowed values: {allowed}")
+        if transport not in transports:
+            transports.append(transport)
+
+    if not transports:
+        raise ValueError("At least one Socket.IO transport must be configured.")
+
+    return transports
+
+
+def resolve_public_base_url(runtime_args: argparse.Namespace, bound_port: int) -> str:
+    public_host = (getattr(runtime_args, "public_host", "") or "").strip()
+    if not public_host:
+        bind_host = (runtime_args.host or "").strip()
+        public_host = "127.0.0.1" if bind_host in {"", "0.0.0.0", "::"} else bind_host
+
+    public_port = getattr(runtime_args, "public_port", None) or bound_port
+    return f"http://{public_host}:{public_port}"
+
+
+def register_disconnect_cleanup(client, *timers) -> None:
+    def stop_timers() -> None:
+        for timer in timers:
+            timer.cancel()
+
+    client.on_disconnect(stop_timers)
 
 
 def render_work_browser(subpath: str) -> None:
@@ -764,7 +853,7 @@ def index_page() -> None:
                 with ui.row().classes("w-full gap-2"):
                     ui.button(
                         "1) 开始处理",
-                        on_click=lambda: start_processing(
+                        on_click=create_start_processing_handler(
                             url_input,
                             work_dir_input,
                             whisper_model_select,
@@ -775,7 +864,7 @@ def index_page() -> None:
                     ).classes("flex-1")
                     ui.button(
                         "2) 开始合成",
-                        on_click=lambda: start_synthesis(
+                        on_click=create_start_synthesis_handler(
                             emo_text_input,
                             diffusion_steps_input,
                             burn_subs_checkbox,
@@ -861,7 +950,7 @@ def index_page() -> None:
                     if log_view.value != new_text:
                         log_view.value = new_text
 
-                ui.timer(0.5, refresh_logs)
+                log_timer = BackgroundTimer(0.5, refresh_logs)
 
                 def refresh_runtime_status() -> None:
                     if progress_bar.is_deleted:
@@ -870,14 +959,47 @@ def index_page() -> None:
                     progress_label.text = f"进度: {round(state.progress * 100)}%"
                     status_label.text = compute_status_text()
 
-                ui.timer(0.4, refresh_runtime_status)
+                status_timer = BackgroundTimer(0.4, refresh_runtime_status)
+                register_disconnect_cleanup(context.client, log_timer, status_timer)
 
 
-def parse_runtime_args() -> argparse.Namespace:
+def parse_runtime_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="VoiceEditor NiceGUI")
-    parser.add_argument("--host", default=os.environ.get("VOICEEDITOR_GUI_HOST", "0.0.0.0"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("VOICEEDITOR_GUI_PORT", "8196")))
-    return parser.parse_args()
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("VOICEEDITOR_GUI_HOST", os.environ.get("NICEGUI_HOST", "0.0.0.0")),
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("VOICEEDITOR_GUI_PORT", os.environ.get("NICEGUI_PORT", "8196"))),
+    )
+    parser.add_argument("--public-host", default=os.environ.get("VOICEEDITOR_GUI_PUBLIC_HOST", ""))
+    parser.add_argument(
+        "--public-port",
+        type=int,
+        default=int(os.environ["VOICEEDITOR_GUI_PUBLIC_PORT"]) if os.environ.get("VOICEEDITOR_GUI_PUBLIC_PORT") else None,
+    )
+    parser.add_argument(
+        "--socket-io-transports",
+        default=os.environ.get("VOICEEDITOR_GUI_SOCKET_IO_TRANSPORTS", ",".join(DEFAULT_SOCKET_IO_TRANSPORTS)),
+    )
+    parser.add_argument(
+        "--reconnect-timeout",
+        type=float,
+        default=float(os.environ.get("VOICEEDITOR_GUI_RECONNECT_TIMEOUT", "30.0")),
+    )
+    parser.add_argument(
+        "--binding-refresh-interval",
+        type=float,
+        default=float(os.environ.get("VOICEEDITOR_GUI_BINDING_REFRESH_INTERVAL", "0.5")),
+    )
+    runtime_args = parser.parse_args(argv)
+    try:
+        runtime_args.socket_io_transports = parse_socket_io_transports(runtime_args.socket_io_transports)
+    except ValueError as exc:
+        parser.error(str(exc))
+    return runtime_args
 
 
 def find_free_port(start_port: int, max_port: int = 65535) -> int:
@@ -901,13 +1023,17 @@ if __name__ in {"__main__", "__mp_main__"}:
     if final_port != runtime_args.port:
         print(f"Port {runtime_args.port} is busy. Using available port {final_port} instead.")
 
-    print(f"Starting VoiceEditor GUI on http://{runtime_args.host}:{final_port}")
+    app.config.socket_io_js_transports = runtime_args.socket_io_transports
+    public_url = resolve_public_base_url(runtime_args, final_port)
+
+    print(f"Starting VoiceEditor GUI on {public_url} (bind: http://{runtime_args.host}:{final_port})")
+    print(f"Socket.IO transports: {', '.join(runtime_args.socket_io_transports)}")
 
     ui.run(
         title="VoiceEditor GUI",
         reload=False,
         host=runtime_args.host,
         port=final_port,
-        reconnect_timeout=30.0,
-        binding_refresh_interval=0.5,
+        reconnect_timeout=runtime_args.reconnect_timeout,
+        binding_refresh_interval=runtime_args.binding_refresh_interval,
     )

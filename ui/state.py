@@ -72,7 +72,7 @@ class AppState:
             self.logs.append(text)
             if len(self.logs) > self.log_tail:
                 self.logs = self.logs[-self.log_tail :]
-            self._infer_progress_from_log(text)
+        self._infer_progress_from_log(text)
 
     def _infer_progress_from_log(self, text: str) -> None:
         if ">> 开始处理视频" in text:
@@ -189,51 +189,54 @@ class AppState:
     def clear_invalid_paths(self) -> list[str]:
         """Clear restored file references that no longer exist on disk. Returns list of cleared fields."""
         cleared = []
+        warnings = []
         with self._lock:
             # Check SRT path
             if self.srt_path and not self.srt_path.exists():
-                logging.warning(f"SRT file no longer exists: {self.srt_path}")
+                warnings.append(f"SRT file no longer exists: {self.srt_path}")
                 self.srt_path = None
                 self.srt_entries = []
                 self.video_data = None
                 self.step = 1
                 self.progress = 0.0
                 cleared.append("srt_path")
-                return cleared  # Early return to reset state
+            else:
+                # Check video_data paths
+                if isinstance(self.video_data, dict):
+                    for key in ("video", "audio", "srt", "voice_ref"):
+                        value = self.video_data.get(key)
+                        if value and not Path(str(value)).exists():
+                            warnings.append(f"Video artifact '{key}' no longer exists: {value}")
+                            # Clear all video data if any critical file is missing
+                            self.video_data = None
+                            self.srt_entries = []
+                            self.step = 1
+                            self.progress = 0.0
+                            cleared.append(f"video_data.{key}")
+                            break
 
-            # Check video_data paths
-            if isinstance(self.video_data, dict):
-                for key in ("video", "audio", "srt", "voice_ref"):
-                    value = self.video_data.get(key)
-                    if value and not Path(str(value)).exists():
-                        logging.warning(f"Video artifact '{key}' no longer exists: {value}")
-                        # Clear all video data if any critical file is missing
-                        self.video_data = None
-                        self.srt_entries = []
+                # Check output_video path if set
+                if self.output_video:
+                    output_path = Path(str(self.output_video))
+                    if not output_path.parent.exists():
+                        warnings.append(f"Output directory no longer exists: {output_path.parent}")
+                        self.output_video = ""
+                        cleared.append("output_video")
+
+                # Check work_dir exists
+                if self.work_dir:
+                    work_path = Path(self.work_dir)
+                    if not work_path.exists():
+                        warnings.append(f"Work directory no longer exists: {work_path}")
+                        # Don't clear work_dir, but reset progress
                         self.step = 1
                         self.progress = 0.0
-                        cleared.append(f"video_data.{key}")
-                        break
-            
-            # Check output_video path if set
-            if self.output_video:
-                output_path = Path(str(self.output_video))
-                if not output_path.parent.exists():
-                    logging.warning(f"Output directory no longer exists: {output_path.parent}")
-                    self.output_video = ""
-                    cleared.append("output_video")
-            
-            # Check work_dir exists
-            if self.work_dir:
-                work_path = Path(self.work_dir)
-                if not work_path.exists():
-                    logging.warning(f"Work directory no longer exists: {work_path}")
-                    # Don't clear work_dir, but reset progress
-                    self.step = 1
-                    self.progress = 0.0
-                    self.srt_entries = []
-                    self.video_data = None
-                    cleared.append("work_dir (reset progress)")
+                        self.srt_entries = []
+                        self.video_data = None
+                        cleared.append("work_dir (reset progress)")
+
+        for message in warnings:
+            logging.warning(message)
         
         return cleared
 

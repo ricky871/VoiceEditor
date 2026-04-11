@@ -1,5 +1,6 @@
 import pytest
 import json
+import logging
 from pathlib import Path
 from ui.state import AppState
 
@@ -94,3 +95,38 @@ def test_app_state_version_and_missing_paths(tmp_path):
     assert state.srt_entries == []
     assert state.step == 1
     assert state.progress == 0.0
+
+
+def test_append_log_inferrs_progress_outside_lock(monkeypatch):
+    state = AppState()
+    observed = {}
+
+    def fake_infer(text):
+        observed["text"] = text
+        observed["lock_held"] = state._lock.locked()
+
+    monkeypatch.setattr(state, "_infer_progress_from_log", fake_infer)
+
+    state.append_log("Processing Segment 2/5")
+
+    assert observed == {"text": "Processing Segment 2/5", "lock_held": False}
+
+
+def test_clear_invalid_paths_logs_outside_lock(tmp_path, monkeypatch):
+    state = AppState()
+    state.srt_path = tmp_path / "missing.srt"
+
+    warnings = []
+
+    def fake_warning(message):
+        acquired = state._lock.acquire(blocking=False)
+        assert acquired, "logging.warning was called while state lock was held"
+        state._lock.release()
+        warnings.append(message)
+
+    monkeypatch.setattr(logging, "warning", fake_warning)
+
+    cleared = state.clear_invalid_paths()
+
+    assert cleared == ["srt_path"]
+    assert warnings == [f"SRT file no longer exists: {tmp_path / 'missing.srt'}"]

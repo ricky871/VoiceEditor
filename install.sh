@@ -10,11 +10,12 @@ sudo apt-get update
 sudo apt-get install -y curl git ffmpeg python3 python3-pip python3-venv fonts-noto-cjk
 
 # 2. Install UV (Standalone installer)
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 if ! command -v uv &> /dev/null
 then
     echo "Installing 'uv' package manager..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    source $HOME/.cargo/env
+    curl -LsSf https://astral.sh/uv/install.sh | sh -s -- -y
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 else
     echo "'uv' is already installed."
 fi

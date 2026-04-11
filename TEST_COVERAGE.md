@@ -1,6 +1,6 @@
 # VoiceEditor 测试覆盖详细分析
 
-**最新更新**: 2026-04-09 (Code Review Phase + 211/211 Tests Passing ✅)  
+**最新更新**: 2026-04-11 (Remote NiceGUI Hardening + 13 Focused GUI Tests Passing ✅)  
 **总覆盖度**: 50% (211 测试通过 | 所有关键路径覆盖)  
 **目标**: 逐步提升至 80%+ (当前集中在稳定性验证)
 
@@ -36,6 +36,40 @@
 | **TOTAL** | **50%** | **211** | 🎉 **全绿** | **+1 关键修复** |
 
 💡 **新增重点**: Path Handling (FFmpeg) — 100% 路径转义覆盖 ✅
+
+---
+
+## 🆕 最新改进: 远端 NiceGUI 稳定性回归 (2026-04-11)
+
+### 变更背景
+远端主机 `ricky` 上的 `main_gui.py` 存在两个直接影响交互的问题:
+- 主按钮通过同步 lambda 返回 coroutine，远端点击后容易表现为“只有粘贴 URL 有效，其他按钮无响应”
+- `AppState` 在持锁期间写日志，UI 日志回流时存在自递归/卡死风险
+
+同时，systemd 远端服务默认走 WebSocket 优先，在浏览器或链路对 WebSocket 升级不稳定时，更容易出现 `/_nicegui_ws/socket.io/... transport=websocket failed`。
+
+### 本轮新增回归测试
+- `tests/test_main_gui.py` 新增 7 个 GUI/运行时测试
+  - 按钮处理器确实 `await` 到 `start_processing` / `start_synthesis`
+  - 远端 GUI 环境变量解析
+  - 非法 Socket.IO transport 拒绝
+  - public URL 解析
+  - client 断开时 timer 清理
+- `tests/test_ui_state.py` 新增 2 个状态安全测试
+  - `append_log()` 在锁外执行进度推断
+  - `clear_invalid_paths()` 在锁外输出 warning
+
+### 本轮验证结果
+```bash
+uv run pytest tests/test_ui_state.py tests/test_main_gui.py
+```
+
+结果: **13/13 通过**
+
+### 覆盖价值
+- 补上了 `main_gui.py` 之前完全缺失的按钮回调/运行时参数回归面
+- 明确保护了远端 GUI 最脆弱的两条路径: 事件调度和日志锁安全
+- 为 systemd 远端部署增加了 transport 顺序和 public host 配置的可回归验证点
 
 ---
 
