@@ -1,0 +1,10 @@
+hosts:
+  - name: ricky
+    ip: 10.245.54.160
+    port: 8022
+    user: ricky
+    ssh_key: "D:\\Tools and Utilities\\WindTerm\\.ssh\\corperate\\id_ed25519"
+    password: "QAL3-000-O5!"
+    remote_dir: "/home/ricky/VoiceEditor"
+    os: "Debian 12"
+
