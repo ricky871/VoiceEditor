@@ -143,27 +143,6 @@ if __name__ == "__main__":
     prewarm_models()
 PY
 
-with_retry(
-    "nvidia/bigvgan_v2_22khz_80band_256x/config.json",
-    lambda: hf_hub_download(
-        repo_id="nvidia/bigvgan_v2_22khz_80band_256x",
-        filename="config.json",
-        cache_dir=cache_dir,
-    ),
-)
-
-with_retry(
-    "nvidia/bigvgan_v2_22khz_80band_256x/bigvgan_generator.pt",
-    lambda: hf_hub_download(
-        repo_id="nvidia/bigvgan_v2_22khz_80band_256x",
-        filename="bigvgan_generator.pt",
-        cache_dir=cache_dir,
-    ),
-)
-
-print(f"[cache] all required files are ready in: {cache_dir}")
-PY
-
 echo "-------------------------------------------------------"
 echo "Installation Complete!"
 echo "Project Path: $INSTALL_DIR"
